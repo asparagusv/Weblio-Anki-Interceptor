@@ -1,3 +1,17 @@
+let deckName = "Default";
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  switch (request.type) {
+    case "updateDeckName":
+      deckName = request.deckName;
+      sendResponse(true);
+      break;
+    case "getDeckName":
+      sendResponse(deckName);
+      break;
+  }
+});
+
 function invoke(action, version, params = {}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -60,7 +74,7 @@ chrome.webRequest.onBeforeRequest.addListener(
             async function saveToAnki() {
               const result = await invoke("addNote", 6, {
                 note: {
-                  deckName: "デフォルト",
+                  deckName: deckName,
                   modelName: "基本",
                   fields: {
                     表面: word + " [sound:" + word + "]",

@@ -51,51 +51,48 @@ chrome.webRequest.onBeforeRequest.addListener(
       details.method === "GET" &&
       details.url.startsWith("https://uwl.weblio.jp/api/word-post-api-json")
     ) {
-      // 1秒後に fetch 関数を実行
-      setTimeout(function () {
-        fetch("https://uwl.weblio.jp/word-list")
-          .then((response) => response.text())
-          .then((data) => {
-            // レスポンスの HTML テキストを DOM パーサーで解析
-            const parser = new DOMParser();
-            const htmlDoc = parser.parseFromString(data, "text/html");
-            // 解析した HTML 文書から単語、意味、音声ファイルの URL を取得
-            const word = htmlDoc.querySelector(
-              ".tngMainTCK > div > a"
-            ).textContent;
-            const meaning = htmlDoc.querySelector(
-              "td:nth-child(1) > div.tngMainTIML"
-            ).textContent;
-            const audio = htmlDoc.querySelector(".wordAudio > source").src;
-            // 取得した情報をコンソールに出力
-            console.log(word);
-            console.log(meaning);
-            console.log(audio);
-            async function saveToAnki() {
-              const result = await invoke("addNote", 6, {
-                note: {
-                  deckName: deckName,
-                  modelName: "基本",
-                  fields: {
-                    表面: word + " [sound:" + word + "]",
-                    裏面: meaning,
-                  },
-                  audio: [
-                    {
-                      url: audio,
-                      filename: word,
-                      fields: ["Front"],
-                    },
-                  ],
+      console.log(details.url);
+      let url = new URL(details.url);
+      let word = url.searchParams.get("lemma");
+      fetch("https://ejje.weblio.jp/content/" + word)
+        .then((response) => response.text())
+        .then((data) => {
+          // レスポンスの HTML テキストを DOM パーサーで解析
+          const parser = new DOMParser();
+          const htmlDoc = parser.parseFromString(data, "text/html");
+          // 解析した HTML 文書から意味、音声ファイルの URL を取得
+          const meaning = htmlDoc.getElementsByClassName(
+            "content-explanation"
+          )[0].textContent;
+          const audio = htmlDoc.querySelector(".contentAudio > source").src;
+          // 取得した情報をコンソールに出力
+          console.log(word);
+          console.log(meaning);
+          console.log(audio);
+          async function saveToAnki() {
+            const result = await invoke("addNote", 6, {
+              note: {
+                deckName: deckName,
+                modelName: "基本",
+                fields: {
+                  表面: word + " [sound:" + word + "]",
+                  裏面: meaning,
                 },
-              });
-              console.log(`${result}`);
-            }
+                audio: [
+                  {
+                    url: audio,
+                    filename: word,
+                    fields: ["Front"],
+                  },
+                ],
+              },
+            });
+            console.log(`${result}`);
+          }
 
-            saveToAnki();
-          })
-          .catch((error) => console.error(error));
-      }, 1000);
+          saveToAnki();
+        })
+        .catch((error) => console.error(error));
     }
   },
   { urls: ["<all_urls>"] },

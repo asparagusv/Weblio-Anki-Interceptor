@@ -1,4 +1,4 @@
-let deckName = "Default";
+let deckName = "デフォルト";
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.type) {
@@ -69,6 +69,19 @@ chrome.webRequest.onBeforeRequest.addListener(
           console.log(word);
           console.log(meaning);
           console.log(audio);
+          // トリガーとなるメッセージと、単語、意味をオブジェクトにする
+          const messages = [
+            "weblioAnkiInterceptor",
+            { word: word, meaning: meaning },
+          ];
+          //現在のアクティブタブにメッセージを送り、content.jsで受信
+          chrome.tabs.query(
+            { active: true, currentWindow: true },
+            function (tabs) {
+              chrome.tabs.sendMessage(tabs[0].id, messages);
+            }
+          );
+
           async function saveToAnki() {
             const result = await invoke("addNote", 6, {
               note: {

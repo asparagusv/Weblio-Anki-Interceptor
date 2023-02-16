@@ -65,9 +65,13 @@ chrome.webRequest.onBeforeRequest.addListener(
           // wordも取得したものに書き換える。スペースの有無を正しくするため。一律小文字化
           word = htmlDoc.getElementById("h1Query").textContent.toLowerCase();
 
-          const meaning = htmlDoc.getElementsByClassName(
-            "content-explanation"
-          )[0].textContent;
+          let meaning;
+          try {
+            meaning = htmlDoc.getElementsByClassName("content-explanation")[0]
+              .textContent;
+          } catch (e) {
+            meaning = htmlDoc.querySelector(".werbjJ > p").textContent;
+          }
 
           // 音声がない場合のエラーをキャッチ
           let audio;

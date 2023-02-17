@@ -3,6 +3,8 @@
   "name": "Weblio Anki Interceptor",
   "version": "1.0",
   "permissions": [
+    "storage",
+    "contextMenus",
     "webRequest",
     "webRequestBlocking",
     "https://uwl.weblio.jp/*",

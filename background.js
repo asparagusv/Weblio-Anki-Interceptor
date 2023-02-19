@@ -119,7 +119,6 @@ chrome.webRequest.onBeforeRequest.addListener(
           }
 
           saveToAnki().then((result) => {
-            console.log(result);
             if (result === "cannot create note because it is a duplicate") {
               let triggerKeyword = "weblioAnkiInterceptor-duplicate";
               const messages = [

@@ -88,16 +88,20 @@ chrome.webRequest.onBeforeRequest.addListener(
             // console.log(JSON.stringify(notesInfo, null, 2));
             // 重複時にエラーをsaveToAnkiの返り値にするためtryでaddNote
             try {
-              const result = await invoke("addNote", 6, { note });
-              console.log(`${result}`);
+              const noteId = await invoke("addNote", 6, { note });
+              console.log(`${noteId}`);
 
               // 作成したノートのIDを保存する
-              chrome.storage.local.set({ noteId: result }, function () {
+              chrome.storage.local.set({ noteId: noteId }, function () {
                 //エラーハンドリング
                 if (chrome.runtime.lastError) {
                   console.error(chrome.runtime.lastError);
                 }
               });
+
+              // add-example.jsのupdateContextMenuTitleをトリガー
+              updateContextMenuTitle(noteId);
+
               let triggerKeyword = "weblioAnkiInterceptor-succeed";
               // トリガーとなるメッセージと、単語、意味をオブジェクトにする
               const messages = [

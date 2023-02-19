@@ -1,19 +1,19 @@
-async function addExampleSentenceToLatestNote(info) {
-  // 直近に作成したノートのIDを取得する
-  function getNoteId() {
-    return new Promise((resolve, reject) => {
-      chrome.storage.local.get("noteId", function (result) {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
-        } else {
-          resolve(result.noteId);
-        }
-      });
+// 直近に作成したノートのIDを取得する
+function getNoteId() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get("noteId", function (result) {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      } else {
+        resolve(result.noteId);
+      }
     });
-  }
+  });
+}
 
+async function addExampleSentenceToLatestNote(info) {
   const noteId = await getNoteId();
-
+  console.log(noteId);
   // ノートIDから情報取得後、裏面を変数にする
   const notesInfo = await invoke("notesInfo", 6, { notes: [noteId] });
   console.log(JSON.stringify(notesInfo, null, 2));
@@ -30,8 +30,22 @@ async function addExampleSentenceToLatestNote(info) {
   const result = await invoke("updateNoteFields", 6, { note });
 }
 
+// 右クリックメニュー作成
 chrome.contextMenus.create({
+  id: "context-menu-id",
   title: "Add this to the latest note as an example",
   contexts: ["selection"],
   onclick: addExampleSentenceToLatestNote,
 });
+
+// 右クリックメニューの名前更新
+// background.jsで単語が登録されるとトリガーされる
+async function updateContextMenuTitle(noteId) {
+  const notesInfo = await invoke("notesInfo", 6, { notes: [noteId] });
+  const front = notesInfo[0].fields["表面"].value.replace(/\s\[[^\]]*\]/g, "");
+
+  const title = front
+    ? `Add this to the note "${front}" as an example`
+    : "Add an example to the latest note";
+  chrome.contextMenus.update("context-menu-id", { title: title });
+}

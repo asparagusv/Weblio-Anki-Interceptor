@@ -12,7 +12,12 @@
     "http://*/*"
   ],
   "background": {
-    "scripts": ["background.js"]
+    "scripts": [
+      "background.js",
+      "add-example.js",
+      "ankiconnect.js",
+      "deck-name.js"
+    ]
   },
   "content_scripts": [
     {

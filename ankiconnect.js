@@ -27,11 +27,3 @@ function invoke(action, version, params = {}) {
     xhr.send(JSON.stringify({ action, version, params }));
   });
 }
-const result = await invoke("addNote", 6, {
-  note: {
-    deckName: "デフォルト",
-    modelName: "基本",
-    fields: { 表面: "yoisha", 裏面: "hey" },
-  },
-});
-console.log(`${result}`);

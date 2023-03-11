@@ -19,7 +19,7 @@ chrome.webRequest.onBeforeRequest.addListener(
 
           // 解析した HTML 文書から単語、意味、音声ファイルを取得
           // wordも取得したものに書き換える。スペースの有無を正しくするため。一律小文字化
-          word = htmlDoc.getElementById("h1Query").textContent.toLowerCase();
+          word = htmlDoc.getElementById("h1Query").title.toLowerCase();
 
           let meaning;
           try {

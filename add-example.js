@@ -32,8 +32,8 @@ async function addExampleSentenceToLatestNote(info) {
 
 // 右クリックメニュー作成
 chrome.contextMenus.create({
-  id: "context-menu-id",
-  title: "Add this to the latest note as an example",
+  id: "example",
+  title: "Add selected text as an example for the last added note",
   contexts: ["selection"],
   onclick: addExampleSentenceToLatestNote,
 });
@@ -45,7 +45,8 @@ async function updateContextMenuTitle(noteId) {
   const front = notesInfo[0].fields["表面"].value.replace(/\s\[[^\]]*\]/g, "");
 
   const title = front
-    ? `Add this to the note "${front}" as an example`
-    : "Add an example to the latest note";
-  chrome.contextMenus.update("context-menu-id", { title: title });
+    ? `Add selected text as an example for the note "${front}"`
+    : "Add selected text as an example for the last added note";
+  chrome.contextMenus.update("example", { title: title });
 }
+

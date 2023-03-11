@@ -1,0 +1,30 @@
+{
+  "name": "Weblio-Anki-Interceptor",
+  "version": "1.0.0",
+  "description": "Weblioのポップアップ辞書chrome拡張機能をインストールしてください https://chrome.google.com/webstore/detail/weblio%E3%83%9D%E3%83%83%E3%83%97%E3%82%A2%E3%83%83%E3%83%97%E8%8B%B1%E5%92%8C%E8%BE%9E%E5%85%B8/oingodpdjohhkelnginmkagmkbplgema?hl=ja",
+  "main": "add-example.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asparagusv/Weblio-Anki-Interceptor.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/asparagusv/Weblio-Anki-Interceptor/issues"
+  },
+  "homepage": "https://github.com/asparagusv/Weblio-Anki-Interceptor#readme",
+  "dependencies": {
+    "@vitalets/google-translate-api": "^9.1.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.21.0",
+    "@babel/preset-env": "^7.20.2",
+    "babel-loader": "^9.1.2",
+    "webpack": "^5.76.1",
+    "webpack-cli": "^5.0.1"
+  }
+}

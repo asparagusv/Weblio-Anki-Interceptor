@@ -14,6 +14,7 @@ const submitButton = document.querySelector("#submit-button");
 const messageBox = document.querySelector("#message-box");
 
 // submitのクリックでトリガー
+// deckNameの定義等を行う
 submitButton.addEventListener("click", async (event) => {
   event.preventDefault();
   const deckName = deckNameInput.value;

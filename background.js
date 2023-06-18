@@ -44,8 +44,20 @@ chrome.webRequest.onBeforeRequest.addListener(
           console.log(meaning);
           console.log(audio);
 
-          addNote(deckName, word, meaning, audio).then((result) => {
-            addNoteErrorHandler(result, word, meaning);
+          const imageSearchUrl =
+            "https://www.google.com/search?q=" +
+            word +
+            "+definition+images&tbm=isch&ved=2ahUKEwiymp6x6sz_AhUfTPUHHQcRACUQ2-cCegQIABAA&oq=glorious+definition+images&gs_lcp=CgNpbWcQAzIECCMQJ1CxB1ixB2CeCmgAcAB4AIABSYgBjQGSAQEymAEAoAEBqgELZ3dzLXdpei1pbWfAAQE&sclient=img&ei=__mOZPKeEZ-Y1e8Ph6KAqAI&bih=1041&biw=2133&hl=en";
+
+          const imageSearchButton =
+            '<a href="' +
+            imageSearchUrl +
+            '" style="margin-left:15px"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a9c7e3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M20.4 14.5L16 10 4 20"/></svg></a>';
+
+          const answer = meaning + imageSearchButton;
+
+          addNote(deckName, word, answer, audio).then((result) => {
+            addNoteErrorHandler(result, word, answer);
           });
           // .catch((e) => console.error(e));
         })

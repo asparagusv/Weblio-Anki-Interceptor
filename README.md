@@ -14,3 +14,8 @@ https://chrome.google.com/webstore/detail/weblio%E3%83%9D%E3%83%83%E3%83%97%E3%8
 
 ## 注意事項
 この拡張機能を使用する前に、Weblioの利用規約を必ず確認し、遵守してください。また、この拡張機能を使用することで生じるいかなる損害についても、開発者は一切責任を負いません。
+
+## 開発
+add-translate.jsを変更した場合は`npx webpack`を実行
+
+

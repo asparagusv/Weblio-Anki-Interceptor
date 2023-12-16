@@ -11,7 +11,7 @@ function getNoteId() {
   });
 }
 
-async function addExampleSentenceToLatestNote(info) {
+async function addExampleSentenceToLatestNote(text) {
   const noteId = await getNoteId();
   console.log(noteId);
   // ノートIDから情報取得後、裏面を変数にする
@@ -23,7 +23,7 @@ async function addExampleSentenceToLatestNote(info) {
   const note = {
     id: noteId,
     fields: {
-      裏面: back + "<ul><li>" + info.selectionText + "</li></ul>",
+      裏面: back + "<ul><li>" + text + "</li></ul>",
     },
   };
   console.log(JSON.stringify(note, null, 2));
@@ -35,7 +35,7 @@ chrome.contextMenus.create({
   id: "example",
   title: "Add selected text as an example for the last added note",
   contexts: ["selection"],
-  onclick: addExampleSentenceToLatestNote,
+  onclick: info => addExampleSentenceToLatestNote(info.selectionText),
 });
 
 // 右クリックメニューの名前更新

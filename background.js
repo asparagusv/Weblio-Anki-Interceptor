@@ -58,6 +58,7 @@ chrome.webRequest.onBeforeRequest.addListener(
 
           addNote(deckName, word, answer, audio).then((result) => {
             addNoteErrorHandler(result, word, answer);
+            getMarkedParentElement()
           });
           // .catch((e) => console.error(e));
         })

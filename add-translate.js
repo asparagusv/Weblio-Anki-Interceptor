@@ -6,6 +6,7 @@ async function addNoteWithTranslatedText(info) {
   console.log(text);
   addNote(deckName, info.selectionText, text).then((result) => {
     addNoteErrorHandler(result, info.selectionText, text);
+    getMarkedParentElement();
   });
 }
 

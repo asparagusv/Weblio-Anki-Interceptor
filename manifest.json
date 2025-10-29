@@ -10,6 +10,7 @@
   "host_permissions": [
     "https://uwl.weblio.jp/*",
     "https://ejje.weblio.jp/*",
+    "https://api.weblio.jp/*",
     "https://translate.googleapis.com/*",
     "http://127.0.0.1:8765/*"
   ],
@@ -24,7 +25,8 @@
       "matches": ["<all_urls>"],
       "js": [
         "content.js", 
-        "mark.js"
+        "mark.js",
+        "dictionary-popup.js"
       ]
     }
   ],

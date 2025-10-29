@@ -126,15 +126,103 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     );
   }
 
+  if (request && request.type === "weblioApiRequest") {
+    console.log("🎯 メッセージ受信:", request);
+    handleDictionaryRequest(request.details).catch((error) => 
+      console.error(error)
+    );
+  }
+
+  if (request && request.type === "addWordToAnki" && request.word) {
+    handleWordAddition(request.word)
+      .then((result) => {
+        if (result === "cannot create note because it is a duplicate") {
+          sendResponse({ success: false, duplicate: true });
+        } else {
+          sendResponse({ success: true, noteId: result });
+        }
+      })
+      .catch((error) => {
+        console.error(error);
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
+
+  if (request && request.type === 'fetchWeblio') {
+    fetch(request.url, { method: 'GET', credentials: 'omit' })
+      .then(async (res) => {
+        if (!res.ok) {
+          sendResponse({ ok: false, status: res.status, error: 'Bad status' });
+          return;
+        }
+        const text = await res.text();
+        sendResponse({ ok: true, text });
+      })
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
   return false;
 });
 
-chrome.webRequest.onBeforeRequest.addListener(
-  (details) => {
-    handleDictionaryRequest(details).catch((error) => console.error(error));
-  },
-  { urls: ["https://uwl.weblio.jp/api/word-post-api-json*"] }
-);
+
+// Handle word addition from popup dictionary
+async function handleWordAddition(word) {
+  console.log('Adding word to Anki:', word);
+  
+  const response = await fetch("https://ejje.weblio.jp/content/" + word);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch dictionary page: ${response.status}`);
+  }
+  
+  const html = await response.text();
+  const parser = new DOMParser();
+  const htmlDoc = parser.parseFromString(html, "text/html");
+
+  const wordInput = htmlDoc.querySelector(".formBoxInputTd > input");
+  let wordToUse = wordInput ? wordInput.value.toLowerCase() : word.toLowerCase();
+
+  let meaning = "";
+  const explanation = htmlDoc.querySelector(".content-explanation");
+  if (explanation) {
+    meaning = explanation.textContent;
+  } else {
+    const fallback = htmlDoc.querySelector(".werbjJ > p");
+    if (fallback) {
+      meaning = fallback.textContent;
+    }
+  }
+
+  let audio = "";
+  const audioSource = htmlDoc.querySelector(".contentAudio > source");
+  if (audioSource) {
+    audio = audioSource.src;
+  } else {
+    audio = "there was no audio source";
+  }
+
+  const imageSearchUrl =
+    "https://www.google.com/search?q=" +
+    encodeURIComponent(wordToUse) +
+    "+definition+images&tbm=isch&ved=2ahUKEwiymp6x6sz_AhUfTPUHHQcRACUQ2-cCegQIABAA&oq=glorious+definition+images&gs_lcp=" +
+    "CgNpbWcQAzIECCMQJ1CxB1ixB2CeCmgAcAB4AIABSYgBjQGSAQEymAEAoAEBqgELZ3dzLXdpei1pbWfAAQE&sclient=img&ei=__mOZPKeEZ-Y1e8Ph6KAqAI&bih=1041&biw=2133&hl=en";
+
+  const imageSearchButton =
+    '<a href="' +
+    imageSearchUrl +
+    '" style="margin-left:15px"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a9c7e3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M20.4 14.5L16 10 4 20"/></svg></a>';
+
+  const answer = meaning + imageSearchButton;
+
+  try {
+    const result = await addNote(deckName, wordToUse, answer, audio);
+    return result;
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
+}
 
 async function handleDictionaryRequest(details) {
   if (details.method !== "GET") {
@@ -146,7 +234,6 @@ async function handleDictionaryRequest(details) {
   if (!lemma) {
     return;
   }
-
   let word = lemma;
   const response = await fetch("https://ejje.weblio.jp/content/" + lemma);
   if (!response.ok) {

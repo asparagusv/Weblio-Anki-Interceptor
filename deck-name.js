@@ -1,29 +1,16 @@
-// deckNameを取得する（エラーハンドリング付き）
-// deckNameがなければデフォルトのまま
-chrome.storage.local.get("deckName", function (result) {
-  if (chrome.runtime.lastError) {
-    console.error(chrome.runtime.lastError);
-  } else {
-    // result.deckNameがundefinedの場合、デフォルトが設定される
-    deckName = result.deckName || "デフォルト";
-    console.log(deckName);
-  }
-});
+// deckNameを取得する
+// service workerは随時停止するのでグローバル変数に保持せず、都度storageから読む
+// 未設定ならデフォルトを返す
+async function getDeckName() {
+  const result = await chrome.storage.local.get("deckName");
+  return result.deckName || "デフォルト";
+}
 
-// deckNameの変更を監視、変更があればデッキ名を保存する
+// deckNameの変更を受け取り、デッキ名を保存する
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  switch (request.type) {
-    case "updateDeckName":
-      deckName = request.deckName;
-      console.log(deckName);
-      // deckNameを保存する（エラーハンドリング付き）
-      chrome.storage.local.set({ deckName: deckName }, function () {
-        if (chrome.runtime.lastError) {
-          console.error(chrome.runtime.lastError);
-        }
-      });
-
-      sendResponse(true);
-      break;
-  }
+  if (request.type !== "updateDeckName") return;
+  chrome.storage.local.set({ deckName: request.deckName }).then(() => {
+    sendResponse(true);
+  });
+  return true; // 非同期でsendResponseするため
 });

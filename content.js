@@ -1,6 +1,9 @@
 // background.jsからのメッセージをトリガーに実行
-chrome.extension.onMessage.addListener(function (request) {
+chrome.runtime.onMessage.addListener(function (request) {
+  // このリスナーが扱うのは [triggerKeyword, data] 形式のメッセージのみ
+  if (!Array.isArray(request)) return;
   const targetElement = document.getElementById("extensionsWeblioEjBx");
+  if (!targetElement) return;
   // cssを適用
   targetElement.style.width = "350px";
   targetElement.style.height = "48px";

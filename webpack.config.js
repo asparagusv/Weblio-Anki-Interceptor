@@ -1,7 +1,10 @@
 const path = require('path');
 
 module.exports = {
-  mode: 'development',
+  mode: 'production',
+  // MV3のCSPはevalを禁止するのでeval系devtoolを使わない
+  devtool: false,
+  target: 'webworker',
   entry: {
     addTranslate: './add-translate.js',
   },

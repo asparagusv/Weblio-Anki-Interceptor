@@ -1,9 +1,8 @@
-chrome.runtime.onMessage.addListener((request) => {
-    if (request.action === "getMarked") {
-      var selectedText = window.getSelection().toString().trim();
-      if (selectedText !== "") {
-        var selection = window.getSelection();
-        var range = selection.getRangeAt(0);
+// selectedText を含むブロック要素(P/DIV/LI等)だけを抽出し、selectedTextを<mark>で囲んで返す
+// range は選択範囲でもホバー時の(collapsedな)Rangeでもよい。commonAncestorContainerから親を遡るだけなので両対応
+function extractMarkedText(selectedText, range) {
+      if (!selectedText || !range) return null;
+      {
         // 選択範囲の親要素
         var selectedElement = range.commonAncestorContainer;
 
@@ -59,10 +58,20 @@ chrome.runtime.onMessage.addListener((request) => {
   
         var mark = document.createElement("mark");
         mark.innerText = selectedText; // 範囲内の内容を <mark> に移動
-  
-        const marked = selectedElement.innerText.replace(selectedText, mark.outerHTML);
-  
-        chrome.runtime.sendMessage({ marked: marked });
+
+        return selectedElement.innerText.replace(selectedText, mark.outerHTML);
+      }
+}
+
+chrome.runtime.onMessage.addListener((request) => {
+    if (request.action === "getMarked") {
+      var selectedText = window.getSelection().toString().trim();
+      if (selectedText !== "") {
+        var range = window.getSelection().getRangeAt(0);
+        var marked = extractMarkedText(selectedText, range);
+        if (marked) {
+          chrome.runtime.sendMessage({ marked: marked });
+        }
       }
     }
   });

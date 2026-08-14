@@ -1,14 +1,7 @@
 // 直近に作成したノートのIDを取得する
-function getNoteId() {
-  return new Promise((resolve, reject) => {
-    chrome.storage.local.get("noteId", function (result) {
-      if (chrome.runtime.lastError) {
-        reject(chrome.runtime.lastError);
-      } else {
-        resolve(result.noteId);
-      }
-    });
-  });
+async function getNoteId() {
+  const result = await chrome.storage.local.get("noteId");
+  return result.noteId;
 }
 
 async function addExampleSentenceToLatestNote(text) {
@@ -31,11 +24,20 @@ async function addExampleSentenceToLatestNote(text) {
 }
 
 // 右クリックメニュー作成
-chrome.contextMenus.create({
-  id: "example",
-  title: "Add selected text as an example for the last added note",
-  contexts: ["selection"],
-  onclick: info => addExampleSentenceToLatestNote(info.selectionText),
+// MV3ではservice worker起動のたびにトップレベルが再実行されid重複するのでonInstalledで作る
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: "example",
+    title: "Add selected text as an example for the last added note",
+    contexts: ["selection"],
+  });
+});
+
+// MV3ではcontextMenus.createのonclickが使えないのでonClickedで受ける
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId === "example") {
+    addExampleSentenceToLatestNote(info.selectionText);
+  }
 });
 
 // 右クリックメニューの名前更新

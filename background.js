@@ -24,47 +24,39 @@ async function parseWeblioHtml(html) {
 
 // lemma(見出し語)からWeblioのページを取得・解析してAnkiにノート追加する共通処理
 async function addWordFromLemma(lemma) {
-  const response = await fetch("https://ejje.weblio.jp/content/" + lemma);
+  // 熟語はスペースを含むのでエンコードしてから繋ぐ
+  const response = await fetch(
+    "https://ejje.weblio.jp/content/" + encodeURIComponent(lemma)
+  );
   const html = await response.text();
   const { word, meaning, audio } = await parseWeblioHtml(html);
 
-  const imageSearchUrl =
-    "https://www.google.com/search?q=" +
-    word +
-    "+definition+images&tbm=isch&ved=2ahUKEwiymp6x6sz_AhUfTPUHHQcRACUQ2-cCegQIABAA&oq=glorious+definition+images&gs_lcp=CgNpbWcQAzIECCMQJ1CxB1ixB2CeCmgAcAB4AIABSYgBjQGSAQEymAEAoAEBqgELZ3dzLXdpei1pbWfAAQE&sclient=img&ei=__mOZPKeEZ-Y1e8Ph6KAqAI&bih=1041&biw=2133&hl=en";
+  // noteIdはaddNoteの戻り値でしか分からないので、先にボタン無しで作成してから
+  // ボタンにnoteIdを埋め込んだ内容でupdateNoteFieldsする
+  const result = await addNote(await getDeckName(), word, meaning, audio);
 
-  const imageSearchButton =
-    '<a href="' +
-    imageSearchUrl +
-    '" style="margin-left:15px"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a9c7e3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M20.4 14.5L16 10 4 20"/></svg></a>';
+  let answer = meaning;
+  if (result !== "cannot create note because it is a duplicate") {
+    const imageSearchUrl =
+      "https://www.google.com/search?q=" +
+      encodeURIComponent(word) +
+      "+definition+images&tbm=isch&noteId=" +
+      encodeURIComponent(result);
 
-  const answer = meaning + imageSearchButton;
+    const imageSearchButton =
+      '<a href="' +
+      imageSearchUrl +
+      '" style="margin-left:15px"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a9c7e3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M20.4 14.5L16 10 4 20"/></svg></a>';
 
-  const result = await addNote(await getDeckName(), word, answer, audio);
+    answer = meaning + imageSearchButton;
+    await invoke("updateNoteFields", 6, {
+      note: { id: result, fields: { 裏面: answer } },
+    });
+  }
+
   addNoteErrorHandler(result, word, answer);
   return { word, result };
 }
-
-// Chrome の webRequest API の onBeforeRequest イベントリスナーを追加
-// MV3ではblockingが使えないが、元々リクエストを書き換えていないので監視のみで足りる
-chrome.webRequest.onBeforeRequest.addListener(
-  // details にリクエストの詳細情報が格納される
-  function (details) {
-    // details.method が GET かつ、details.url の先頭が "https://uwl.weblio.jp/api/word-post-api-json" である場合
-    if (
-      details.method === "GET" &&
-      details.url.startsWith("https://uwl.weblio.jp/api/word-post-api-json")
-    ) {
-      console.log(details.url);
-      let url = new URL(details.url);
-      let lemma = url.searchParams.get("lemma");
-      addWordFromLemma(lemma)
-        .then(() => getMarkedParentElement())
-        .catch((error) => console.error(error));
-    }
-  },
-  { urls: ["<all_urls>"] }
-);
 
 // dictionary-popup.js からのホバー/選択登録リクエストを処理する
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {

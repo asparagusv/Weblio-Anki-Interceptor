@@ -5,8 +5,8 @@
   "permissions": [
     "storage",
     "contextMenus",
-    "webRequest",
-    "offscreen"
+    "offscreen",
+    "webNavigation"
   ],
   "host_permissions": [
     "https://uwl.weblio.jp/*",

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>extractMarkedText / Language Reactor 実 DOM</title>
+
+<!--
+  Language Reactor 5.1.8 の実際の字幕 DOM と、その拡張が注入している実際の CSS。
+  CSS は pageScript_lln.min.js から抜き出したもの。要点は3つ:
+    - 単語のツールチップ .tt は position:absolute の吹き出しで、通常は visibility:hidden
+    - ホバー中の単語だけ :hover で visibility:visible になる(辞書を引く瞬間がこの状態)
+    - Save Phrase を持つ .lln-star-and-menu-buttons も position:absolute
+-->
+<style>
+  .lln-subs {
+    display: inline-block;
+    color: rgb(255, 255, 255);
+    text-align: center;
+    padding: 0 10px 4px;
+    line-height: 1.4em;
+    position: relative;
+    cursor: text;
+  }
+  .lln-hover-tooltip { position: relative; }
+  .lln-hover-tooltip > .tt {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    left: calc(100% + 20px);
+    width: auto;
+    max-width: 180px;
+    padding: 5px 12px;
+    z-index: 100;
+    background: #00639e;
+    color: #ffffff;
+  }
+  .lln-hover-tooltip.top > .tt {
+    right: auto;
+    left: 50%;
+    bottom: calc(100% + 20px);
+    top: auto;
+    transform: translateX(-50%);
+  }
+  .lln-hover-tooltip:hover > .tt,
+  .lln-hover-tooltip.lln-simulate-hover > .tt {
+    visibility: visible;
+    opacity: 1;
+  }
+  .lln-hover-tooltip .tt.lln-tt-hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .lln-star-and-menu-buttons {
+    display: flex;
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 0;
+  }
+  .lln-star-sub-btn {
+    position: relative;
+    opacity: 0;
+    width: 22px;
+    height: 22px;
+    display: inline-block;
+  }
+  .lln-sub-menu-btn {
+    position: relative;
+    opacity: 0;
+    width: 16px;
+    height: 22px;
+    display: inline-block;
+  }
+</style>
+
+<div
+  class="lln-subs lln-sentence-wrap"
+  id="lln-subs"
+  dir="ltr"
+  style="
+    font-size: 1em;
+    transition: background-color 0.2s;
+    background: rgba(25, 25, 25, 0.4);
+  "
+  data-index="546"
+>
+  <span class="lln-subs-replay-btn"></span
+  ><span
+    data-token-index="0"
+    data-word-key="WORD|and|en"
+    data-underline-color="C0"
+    class="lln-word lln-hover-tooltip top"
+    style="color: rgb(255, 255, 255)"
+    ><span class="tt lln-tt-hidden">...</span>and</span
+  ><span class="lln-not-word"> </span
+  ><span
+    data-token-index="2"
+    data-word-key="WORD|that|en"
+    data-underline-color="C0"
+    class="lln-word lln-hover-tooltip top"
+    style="color: rgb(255, 255, 255)"
+    ><span class="tt lln-tt-hidden">...</span>that</span
+  ><span class="lln-not-word"> </span
+  ><span
+    data-token-index="4"
+    data-word-key="WORD|over|en"
+    data-underline-color="C0"
+    class="lln-word lln-hover-tooltip top"
+    style="color: rgb(255, 255, 255)"
+    ><span class="tt lln-tt-hidden">...</span>over</span
+  ><span class="lln-not-word"> </span
+  ><span
+    data-token-index="6"
+    data-word-key="WORD|time|en"
+    data-underline-color="C0"
+    class="lln-word lln-hover-tooltip top"
+    style="color: rgb(255, 255, 255)"
+    ><span class="tt lln-tt-hidden">...</span>time</span
+  ><span class="lln-not-word lln-newline"> </span
+  ><span
+    data-token-index="8"
+    data-word-key="WORD|cause|en"
+    data-underline-color="C0"
+    class="lln-word lln-hover-tooltip top"
+    style="color: rgb(255, 255, 255)"
+    ><span class="tt lln-tt-hidden">...</span>causes</span
+  ><span class="lln-not-word"> </span
+  ><span
+    data-token-index="10"
+    data-word-key="WORD|the|en"
+    data-underline-color="C0"
+    class="lln-word lln-hover-tooltip top"
+    style="color: rgb(255, 255, 255)"
+    ><span class="tt lln-tt-hidden">...</span>the</span
+  ><span class="lln-not-word"> </span
+  ><span
+    data-token-index="12"
+    data-word-key="WORD|animal|en"
+    data-underline-color="C0"
+    class="lln-word lln-hover-tooltip top lln-simulate-hover"
+    id="target"
+    style="color: rgb(255, 255, 255)"
+    ><span class="tt"
+      ><span style="font-size: 17.856px; white-space: nowrap; opacity: 1"
+        >動物</span
+      ><br /><span
+        style="font-size: 17.856px; white-space: nowrap; opacity: 0.8"
+        >獣</span
+      ><br /><span
+        style="font-size: 17.856px; white-space: nowrap; opacity: 0.6"
+        >生き物</span
+      ><br />
+      <span
+        class="lln-hover-dict-freq-wrap in-subs-hover-dict"
+        title="796 most frequent word"
+      >
+        <span class="lln-hover-dict-freq">
+          <span
+            style="
+              width: 38.3876%;
+              height: 100%;
+              position: absolute;
+              left: 0;
+              background: #9cffcd;
+            "
+          ></span>
+        </span>
+      </span> </span
+    >animal</span
+  ><span class="lln-not-word"> </span
+  ><span
+    data-token-index="14"
+    data-word-key="WORD|to|en"
+    data-underline-color="C0"
+    class="lln-word lln-hover-tooltip top"
+    style="color: rgb(255, 255, 255)"
+    ><span class="tt lln-tt-hidden">...</span>to</span
+  ><span class="lln-not-word"> </span
+  ><span
+    data-token-index="16"
+    data-word-key="WORD|die|en"
+    data-underline-color="C0"
+    class="lln-word lln-hover-tooltip top"
+    style="color: rgb(255, 255, 255)"
+    ><span class="tt lln-tt-hidden">...</span>die</span
+  ><span class="lln-not-word">.</span
+  ><span class="lln-star-and-menu-buttons"
+    ><span class="lln-star-sub-btn lln-hover-tooltip top"
+      ><span class="tt">Save Phrase</span></span
+    ><span class="lln-sub-menu-btn"></span
+  ></span>
+</div>
+
+<pre id="out"></pre>
+
+<script>
+  // mark.js は content script 前提なので chrome API をスタブする
+  window.chrome = { runtime: { onMessage: { addListener() {} } } };
+</script>
+<script src="../mark.js"></script>
+<script>
+  const results = [];
+  function check(name, pass, detail) {
+    results.push((pass ? "PASS" : "FAIL") + " " + name + (pass ? "" : "\n     " + detail));
+  }
+
+  // 実際の CSS が効いていることを先に確かめる。ここが崩れると以降のテストが無意味になる
+  const tt = document.querySelector("#target > .tt");
+  const style = getComputedStyle(tt);
+  check("前提: ホバー中の単語のツールチップは可視", style.visibility === "visible", style.visibility);
+  check("前提: ツールチップは position:absolute", style.position === "absolute", style.position);
+  check("前提: Save Phrase の親は position:absolute",
+    getComputedStyle(document.querySelector(".lln-star-and-menu-buttons")).position === "absolute",
+    "");
+
+  // ホバー中の単語のテキストノード上に collapsed Range を作る(辞書ポップアップと同じ形)
+  const textNode = document.getElementById("target").lastChild;
+  const range = document.createRange();
+  range.setStart(textNode, 0);
+  range.collapse(true);
+
+  const marked = extractMarkedText("animal", range);
+  check("ホバー中の単語の日本語訳が混入しない",
+    marked && !/動物|獣|生き物/.test(marked), JSON.stringify(marked));
+  check("非表示の '...' が混入しない", marked && !marked.includes("..."), JSON.stringify(marked));
+  check("Save Phrase が混入しない",
+    marked && !marked.includes("Save Phrase"), JSON.stringify(marked));
+  check("字幕の1文がそのまま取れている",
+    marked === "and that over time causes the <mark>animal</mark> to die.",
+    JSON.stringify(marked));
+
+  const failed = results.filter((r) => r.startsWith("FAIL")).length;
+  results.push("");
+  results.push(failed === 0 ? "ALL PASS" : failed + " FAILED");
+  document.getElementById("out").textContent = results.join("\n");
+</script>

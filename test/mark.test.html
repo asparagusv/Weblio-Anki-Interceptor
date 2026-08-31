@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>extractMarkedText test</title>
+<style>
+  .lr-dots { display: none; }
+  .lr-translation { display: none; }
+  .lr-toolbar { position: absolute; left: -9999px; }
+</style>
+
+<!-- ケース1: Language Reactor 風の字幕。単語 span の中に非表示の "..." と
+     日本語訳があり、同じブロック内に Save Phrase ボタンがある -->
+<div id="lr">
+  <span class="lr-word"><span class="lr-dots">...</span>Disney</span>
+  <span class="lr-word"><span class="lr-dots">...</span>animals</span>
+  <span class="lr-word"><span class="lr-dots">...</span>interacting</span>
+  <span class="lr-word"><span class="lr-dots">...</span>with</span>
+  <span class="lr-word"><span class="lr-dots">...</span>John&nbsp;</span>
+  <span class="lr-word"><span class="lr-dots">...</span>the</span>
+  <span class="lr-word"><span class="lr-dots">...</span>baptist,</span>
+  <span class="lr-word" id="lr-target"><span class="lr-dots">...</span>cherubs</span>
+  <span class="lr-word">
+    <span class="lr-translation">
+      押す
+      押して
+      押し
+    </span>
+    pushing</span>
+  <span class="lr-word"><span class="lr-dots">...</span>a</span>
+  <span class="lr-word"><span class="lr-dots">...</span>pig,</span>
+  <div class="lr-toolbar"><span>Save Phrase</span></div>
+</div>
+
+<!-- ケース2: ふつうの記事。<a> で囲まれた語があっても文はそのまま取れること -->
+<article>
+  <p id="plain">
+    The <a href="#">cherubs</a> were carved into the ceiling
+    of the chapel.
+  </p>
+</article>
+
+<!-- ケース3: HTML 特殊文字。エスケープせずカードに埋めると壊れる -->
+<div><p id="escape">Use a &lt;div&gt; &amp; a cherubs tag.</p></div>
+
+<!-- ケース4: <br> 区切り。歌詞や詩で1行だけ取れること -->
+<div id="br">
+  First line has nothing.<br>
+  The cherubs sang here.<br>
+  Third line has nothing.
+</div>
+
+<!-- ケース5: 複数語の選択(選択パスは最大4語まで渡ってくる) -->
+<div><p id="phrase">He watched the cherubs sang here quietly.</p></div>
+
+<pre id="out"></pre>
+
+<script>
+  // mark.js は content script 前提なので chrome API をスタブする
+  window.chrome = { runtime: { onMessage: { addListener() {} } } };
+</script>
+<script src="../mark.js"></script>
+<script>
+  const results = [];
+
+  function check(name, pass, detail) {
+    results.push((pass ? "PASS" : "FAIL") + " " + name + (pass ? "" : "\n     " + detail));
+  }
+
+  // 単語のテキストノード上に collapsed Range を作る(ホバー時と同じ形)
+  function rangeOnWord(root, word) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const i = node.data.indexOf(word);
+      if (i !== -1) {
+        const range = document.createRange();
+        range.setStart(node, i);
+        range.collapse(true);
+        return range;
+      }
+    }
+    throw new Error("word not found: " + word);
+  }
+
+  // --- ケース1: Language Reactor ---
+  const lr = extractMarkedText("cherubs", rangeOnWord(document.getElementById("lr-target"), "cherubs"));
+  check("lr: 非表示の '...' が混入しない", lr && !lr.includes("..."), JSON.stringify(lr));
+  check("lr: 非表示の日本語訳が混入しない", lr && !lr.includes("押す"), JSON.stringify(lr));
+  check("lr: UI の 'Save Phrase' が混入しない", lr && !lr.includes("Save Phrase"), JSON.stringify(lr));
+  check("lr: 改行・連続空白がない", lr && !/\s\s|\n/.test(lr), JSON.stringify(lr));
+  check("lr: 対象語が <mark> で囲まれている", lr && lr.includes("<mark>cherubs</mark>"), JSON.stringify(lr));
+  check("lr: 文全体が取れている",
+    lr === "Disney animals interacting with John the baptist, <mark>cherubs</mark> pushing a pig,",
+    JSON.stringify(lr));
+
+  // --- ケース2: ふつうの記事 ---
+  const plain = extractMarkedText("cherubs", rangeOnWord(document.getElementById("plain"), "cherubs"));
+  check("plain: 文全体が1行で取れている",
+    plain === "The <mark>cherubs</mark> were carved into the ceiling of the chapel.",
+    JSON.stringify(plain));
+
+  // --- ケース3: HTML 特殊文字 ---
+  const esc = extractMarkedText("cherubs", rangeOnWord(document.getElementById("escape"), "cherubs"));
+  check("escape: < > & がエスケープされている",
+    esc === "Use a &lt;div&gt; &amp; a <mark>cherubs</mark> tag.",
+    JSON.stringify(esc));
+
+  // --- ケース4: <br> 区切り ---
+  const br = extractMarkedText("cherubs", rangeOnWord(document.getElementById("br"), "cherubs"));
+  check("br: 対象語のある行だけ取れている",
+    br === "The <mark>cherubs</mark> sang here.",
+    JSON.stringify(br));
+
+  // --- ケース5: 複数語の選択 ---
+  const phraseRange = (() => {
+    const node = document.getElementById("phrase").firstChild;
+    const i = node.data.indexOf("cherubs sang");
+    const r = document.createRange();
+    r.setStart(node, i);
+    r.setEnd(node, i + "cherubs sang".length);
+    return r;
+  })();
+  const phrase = extractMarkedText("cherubs sang", phraseRange);
+  check("phrase: 複数語がまとめて <mark> される",
+    phrase === "He watched the <mark>cherubs sang</mark> here quietly.",
+    JSON.stringify(phrase));
+
+  const failed = results.filter((r) => r.startsWith("FAIL")).length;
+  results.push("");
+  results.push(failed === 0 ? "ALL PASS" : failed + " FAILED");
+  document.getElementById("out").textContent = results.join("\n");
+</script>

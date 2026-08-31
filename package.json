@@ -4,7 +4,7 @@
   "description": "Weblioのポップアップ辞書chrome拡張機能をインストールしてください https://chrome.google.com/webstore/detail/weblio%E3%83%9D%E3%83%83%E3%83%97%E3%82%A2%E3%83%83%E3%83%97%E8%8B%B1%E5%92%8C%E8%BE%9E%E5%85%B8/oingodpdjohhkelnginmkagmkbplgema?hl=ja",
   "main": "add-example.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "sh test/run.sh"
   },
   "repository": {
     "type": "git",

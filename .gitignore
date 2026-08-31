@@ -1,3 +1,6 @@
+node_modules/
+
 .tokensave
 .DS_Store
 .claude/
+.codex/

@@ -1,5 +1,8 @@
 node_modules/
 
+# APIキーを持つのでコミットしない。translate-secrets.example.js をコピーして作る
+translate-secrets.js
+
 .tokensave
 .DS_Store
 .claude/

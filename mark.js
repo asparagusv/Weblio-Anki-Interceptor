@@ -84,16 +84,3 @@ function extractMarkedText(selectedText, range) {
     escapeHtml(sentence.slice(index + selectedText.length))
   );
 }
-
-chrome.runtime.onMessage.addListener((request) => {
-    if (request.action === "getMarked") {
-      var selectedText = window.getSelection().toString().trim();
-      if (selectedText !== "") {
-        var range = window.getSelection().getRangeAt(0);
-        var marked = extractMarkedText(selectedText, range);
-        if (marked) {
-          chrome.runtime.sendMessage({ marked: marked });
-        }
-      }
-    }
-  });

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>showPopup 翻訳ボタン / 翻訳表示 test</title>
+
+<!-- dictionary-popup.js はトップレベルで chrome.* を触るので、読み込む前に最小のスタブを置く -->
+<script>
+  window.chrome = {
+    runtime: { onMessage: { addListener() {} }, sendMessage() {} },
+  };
+</script>
+<script src="../dictionary-popup.js"></script>
+<pre id="out"></pre>
+<script>
+  const results = [];
+
+  function check(name, pass, detail) {
+    results.push((pass ? "PASS" : "FAIL") + " " + name + (pass ? "" : "\n     " + detail));
+  }
+
+  // Weblio API が実際に返すHTMLの骨格。#baseMcr が背景と枠を持つ箱で、
+  // その中身が #contentSml > #eBodyMcr。31文字以上の問い合わせでは +ボタンが返ってこない。
+  // Weblio の chrome.css は #eBodyMcr を height:48px で固定してくる。
+  // 実際と同じく showPopup 側の <style> より後ろに置いて、上書きできているかを見る
+  const WEBLIO_CSS = "<style>#eBodyMcr{height:48px;padding:0}.contentMcr{margin:0 5px}</style>";
+
+  const PLUS_BUTTON =
+    '<p class=barL><a onclick="postTango(this, \'apple\')" class=wlaBtnI>' +
+    '<span class=wlaBtnTtlTng><img alt="単語帳に追加"></span></a></p>';
+
+  const wrap = (bar, body) =>
+    WEBLIO_CSS + '<div id="baseMcr"><div id="contentSml"><div id="eBodyMcr">' +
+    '<div class=eBarSml>' + bar + '</div><b class=clr></b>' + body +
+    "</div></div></div>";
+
+  const NOT_FOUND_BODY =
+    '<div class=whSpcSml></div>' +
+    '<div class="contentMcr">英和・和英辞典で一致する英語は見つかりませんでした。</div>';
+
+  const SHAPES = {
+    // 30文字以下でヒット: +ボタンあり
+    "ヒット": wrap(
+      '<a class="barL title">apple</a>' + PLUS_BUTTON + '<p class="barR dctCr">(研究社)</p>',
+      "<div class=contentMcr>リンゴ</div>"),
+    // 30文字以下で見つからず: +ボタンあり
+    "見つからず(+あり)": wrap(
+      "<p class=barL>well, it's fine</p><p class=barL></p>" + PLUS_BUTTON, NOT_FOUND_BODY),
+    // 31〜50文字: 見つからず、+ボタンなし
+    "見つからず(+なし)": wrap(
+      "<p class=barL>word word word</p><p class=barL></p>", NOT_FOUND_BODY),
+    // 51文字以上: Weblio翻訳への誘導ページ。+ボタンなし
+    "翻訳誘導": wrap(
+      "<p class=barL>word word word ...</p><p class=barL></p>",
+      '<div class=whSpcSml></div>' +
+      '<div class=contentMcr><a class=footTrnsAcTxt>「word word word 」</a></div>'),
+  };
+
+  const ANCHOR = new DOMRect(10, 100, 50, 16);
+
+  // 本番と同じ経路で組み立てる。showPopup が popupElement を作って document に挿す
+  function open(html) {
+    showPopup(html, "apple", "apple", null, ANCHOR);
+    return popupElement.shadowRoot.querySelector(".weblio-popup-content");
+  }
+
+  for (const [name, html] of Object.entries(SHAPES)) {
+    const content = open(html);
+    const eBody = content.querySelector("#eBodyMcr");
+    const button = content.querySelector(".weblio-translate-btn");
+    const addBtn = content.querySelector(".weblio-add-translated-btn");
+
+    check(name + ": 翻訳ボタンが1つ挿さる",
+      content.querySelectorAll(".weblio-translate-btn").length === 1, content.innerHTML);
+    check(name + ": 翻訳カード追加ボタンが1つ挿さる",
+      content.querySelectorAll(".weblio-add-translated-btn").length === 1, content.innerHTML);
+    check(name + ": 翻訳ボタンは見出しバーの中",
+      !!button && !!button.closest(".eBarSml"), content.innerHTML);
+    check(name + ": 翻訳カード追加ボタンは翻訳ボタンのすぐ右",
+      button.nextElementSibling === addBtn, content.innerHTML);
+
+    // 前提: Weblio の height:48px が効いている状態から始まっているか
+    const before = eBody.getBoundingClientRect().height;
+
+    renderTranslation(content, "これはそこそこ長い訳文です。枠が下に伸びるかを見る。", ANCHOR);
+    const box = content.querySelector(".weblio-translation");
+    const after = eBody.getBoundingClientRect().height;
+
+    check(name + ": 翻訳が #eBodyMcr の中(=Weblioの枠の中)に入る",
+      !!box && !!box.closest("#eBodyMcr"), content.innerHTML);
+    check(name + ": 翻訳が意味の表示より後ろに来る",
+      !!box && !!(content.querySelector(".contentMcr").compareDocumentPosition(box) &
+        Node.DOCUMENT_POSITION_FOLLOWING), content.innerHTML);
+    check(name + ": Weblioの高さ固定(48px)を上書きして枠が下に伸びる",
+      after > before && after > 48, "before=" + before + " after=" + after);
+    check(name + ": 翻訳が枠(#baseMcr)の底より内側にある",
+      box.getBoundingClientRect().bottom <=
+        content.querySelector("#baseMcr").getBoundingClientRect().bottom,
+      "box=" + box.getBoundingClientRect().bottom +
+        " base=" + content.querySelector("#baseMcr").getBoundingClientRect().bottom);
+
+    renderTranslation(content, "訳文2", ANCHOR);
+    check(name + ": 翻訳を出し直しても増殖せず差し替わる",
+      content.querySelectorAll(".weblio-translation").length === 1 && box.textContent === "訳文2",
+      content.innerHTML);
+
+    closePopup();
+  }
+
+  // +ボタンがある形では、Weblioの+ → 翻訳 → 翻訳カード追加 の順に同じ <p class=barL> に並ぶ
+  {
+    const content = open(SHAPES["ヒット"]);
+    const plusCell = content.querySelector(".wlaBtnTtlTng").closest("p");
+    const order = [...plusCell.children].map((el) => el.className);
+    check("+ボタンありでは + と同じセルに並ぶ",
+      plusCell.contains(content.querySelector(".weblio-translate-btn")) &&
+        plusCell.contains(content.querySelector(".weblio-add-translated-btn")), content.innerHTML);
+    check("並び順は Weblioの+ → 翻訳 → 翻訳カード追加",
+      order.join("|") === "wlaBtnI|weblio-popup-btn weblio-translate-btn|" +
+        "weblio-popup-btn weblio-add-translated-btn", order.join("|"));
+    closePopup();
+  }
+
+  // Weblio の骨格が無い想定外のHTMLでも落とさず出す
+  {
+    const content = open("<div class=contentMcr>なにか</div>");
+    check("見出しバーが無くても翻訳ボタンは出る",
+      content.firstElementChild?.classList.contains("weblio-translate-btn"), content.innerHTML);
+    check("見出しバーが無くても翻訳カード追加ボタンが右に続く",
+      content.children[1]?.classList.contains("weblio-add-translated-btn"), content.innerHTML);
+    renderTranslation(content, "訳文", ANCHOR);
+    check("#eBodyMcr が無くても翻訳は出る",
+      !!content.querySelector(".weblio-translation"), content.innerHTML);
+    closePopup();
+  }
+
+  const failed = results.filter((r) => r.startsWith("FAIL")).length;
+  results.push("");
+  results.push(failed === 0 ? "ALL PASS" : failed + " FAILED");
+  document.getElementById("out").textContent = results.join("\n");
+</script>

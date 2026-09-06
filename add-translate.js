@@ -36,32 +36,44 @@ async function translateWithGoogle(text) {
   return translated;
 }
 
-async function addNoteWithTranslatedText(info) {
-  const text = await translateToJapanese(info.selectionText);
-  const result = await addNote(await getDeckName(), info.selectionText, text);
+// 選択した原文を表面、その翻訳を裏面にしたノートを作る。戻り値はaddNoteのもの(noteId or エラー文字列)。
+// translation はポップアップ側で既に表示済みの訳文。渡されればカードの裏面と表示を一致させられるし、
+// 同じ文をもう一度APIに投げずに済む。未翻訳のまま押された場合はここで引く
+async function addNoteWithTranslatedText(text, translation) {
+  const meaning = translation || (await translateToJapanese(text));
+  const result = await addNote(await getDeckName(), text, meaning);
 
-  let answer = text;
+  let answer = meaning;
   if (result !== "cannot create note because it is a duplicate") {
-    answer = await appendImageSearchButton(result, info.selectionText, text);
+    answer = await appendImageSearchButton(result, text, meaning);
   }
 
-  addNoteErrorHandler(result, info.selectionText, answer);
-  getMarkedParentElement();
+  addNoteErrorHandler(result, text, answer);
+  return result;
 }
 
-// 右クリックメニュー作成
-// MV3ではservice worker起動のたびにトップレベルが再実行されid重複するのでonInstalledで作る
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: "google-translate",
-    title: "Add selected text with Google Translation",
-    contexts: ["selection"],
-  });
-});
-
-// MV3ではcontextMenus.createのonclickが使えないのでonClickedで受ける
-chrome.contextMenus.onClicked.addListener((info) => {
-  if (info.menuItemId === "google-translate") {
-    addNoteWithTranslatedText(info);
+// dictionary-popup.js の翻訳ボタン / 翻訳カード追加ボタンからのリクエスト。
+// content script からだと CORS とAPIキー露出の問題があるので service worker で代行する
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request && request.type === "translateText" && request.text) {
+    translateToJapanese(request.text)
+      .then((text) => sendResponse({ ok: true, text }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+    return true; // 非同期でsendResponseするため
   }
+
+  if (request && request.type === "addTranslatedNote" && request.text) {
+    addNoteWithTranslatedText(request.text, request.translation)
+      .then((result) =>
+        sendResponse(
+          result === "cannot create note because it is a duplicate"
+            ? { success: false, duplicate: true }
+            : { success: true, noteId: result }
+        )
+      )
+      .catch((error) => sendResponse({ success: false, error: String(error) }));
+    return true;
+  }
+
+  return false;
 });

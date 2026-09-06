@@ -107,11 +107,32 @@ async function fetchDictionaryHTML(word) {
   });
 }
 
+// Google翻訳(service worker側のwebpackバンドル)に翻訳を代行させる
+async function fetchTranslation(text) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "translateText", text }, (res) => {
+      if (chrome.runtime.lastError) {
+        console.error("[weblio] Translate error:", chrome.runtime.lastError.message);
+        resolve(null);
+        return;
+      }
+      if (!res || !res.ok) {
+        console.error("[weblio] Translate error:", res?.error || "unknown");
+        resolve(null);
+        return;
+      }
+      resolve(res.text);
+    });
+  });
+}
+
 // ポップアップと単語の行の間に空けるマージン
 const POPUP_GAP = 8;
 
 // 引いた単語の行(anchorRect)に被らないよう、行の下か上の空いている側に置く
 function positionPopup(el, content, anchorRect) {
+  // 翻訳を足して置き直すとき、前回詰めた高さが残っていると計算がずれるのでリセットする
+  content.style.maxHeight = "";
   const spaceBelow = window.innerHeight - anchorRect.bottom - POPUP_GAP * 2;
   const spaceAbove = anchorRect.top - POPUP_GAP * 2;
   const height = el.getBoundingClientRect().height;
@@ -136,6 +157,100 @@ function positionPopup(el, content, anchorRect) {
 
   el.style.top = `${top}px`;
   el.style.left = `${left}px`;
+}
+
+// 無操作でポップアップが自動で消えるまでの時間
+const AUTO_CLOSE_MS = 10000;
+
+// 翻訳ボタン押下中は止めて、翻訳が出た瞬間に0秒から測り直すので関数にしておく
+function startAutoCloseTimer() {
+  if (autoCloseTimer) clearTimeout(autoCloseTimer);
+  autoCloseTimer = setTimeout(() => closePopup({ releaseHover: true }), AUTO_CLOSE_MS);
+}
+
+function stopAutoCloseTimer() {
+  if (autoCloseTimer) {
+    clearTimeout(autoCloseTimer);
+    autoCloseTimer = null;
+  }
+}
+
+// Material Symbols の translate / add アイコン。CDN画像に頼らずShadow DOM内で完結させる
+const TRANSLATE_ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>`;
+const ADD_ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`;
+
+function createIconButton(className, title, svg) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `weblio-popup-btn ${className}`;
+  button.title = title;
+  button.innerHTML = svg;
+  return button;
+}
+
+// 翻訳結果をWeblioの意味の下に区切り線付きで出し、伸びたぶん位置を取り直す。
+// Weblioの白枠(#baseMcr)の中身である #eBodyMcr に入れることで、枠が下に伸びて翻訳を包む
+function renderTranslation(content, text, anchorRect) {
+  let box = content.querySelector(".weblio-translation");
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "weblio-translation";
+    (content.querySelector("#eBodyMcr") || content).appendChild(box);
+  }
+  box.textContent = text;
+  positionPopup(popupElement, content, anchorRect);
+}
+
+// Weblioの+ボタンの隣に [翻訳][翻訳カード追加] の順で並べる。
+// sourceText は翻訳にかける、かつ翻訳カードの表面になる元の文字列
+function appendPopupButtons(content, addButton, sourceText, range, anchorRect) {
+  const translateButton = createIconButton("weblio-translate-btn", "翻訳", TRANSLATE_ICON_SVG);
+  const addTranslatedButton = createIconButton(
+    "weblio-add-translated-btn", "翻訳してAnkiに追加", ADD_ICON_SVG);
+
+  // Weblioは31文字以上の問い合わせに+ボタンを返さないので、
+  // その場合は見出しバー(.eBarSml)に+ボタンと同じ形の<p class=barL>を足してそこへ置く
+  const slot = addButton?.closest("a") || addButton;
+  const bar = content.querySelector(".eBarSml");
+  if (slot) {
+    slot.after(translateButton, addTranslatedButton);
+  } else if (bar) {
+    const cell = document.createElement("p");
+    cell.className = "barL";
+    cell.append(translateButton, addTranslatedButton);
+    bar.appendChild(cell);
+  } else {
+    content.prepend(translateButton, addTranslatedButton);
+  }
+
+  // 翻訳ボタンで出した訳文。カード追加でも使い回して、表示とカード裏面をずらさない
+  let translation = null;
+
+  translateButton.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (translateButton.disabled) return;
+
+    // 翻訳を待っている間にオートクローズで消えないよう止める
+    stopAutoCloseTimer();
+    translateButton.disabled = true;
+
+    const translated = await fetchTranslation(sourceText);
+    // 待っている間に閉じた/別の単語で開き直された場合は捨てる
+    if (!translateButton.isConnected) return;
+
+    translation = translated;
+    translateButton.disabled = false;
+    renderTranslation(content, translated ?? "翻訳できませんでした", anchorRect);
+    startAutoCloseTimer();
+  });
+
+  addTranslatedButton.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    addTranslatedNoteToAnki(sourceText, translation, range);
+    closePopup();
+  });
 }
 
 // ポップアップを表示。rawWord/rangeは周辺文章を例文登録するために保持しておく
@@ -167,9 +282,42 @@ function showPopup(html, word, rawWord, range, anchorRect) {
         line-height: 1.5;
         color: #222;
       }
+      .weblio-popup-btn {
+        margin-left: 6px;
+        padding: 0;
+        border: none;
+        background: none;
+        line-height: 0;
+        vertical-align: middle;
+        cursor: pointer;
+      }
+      .weblio-popup-btn[disabled] {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .weblio-translate-btn { color: #4285f4; }
+      /* Weblioの+ボタン(#42b14c)と同じ緑にして、同じ「追加」だと分かるようにする */
+      .weblio-add-translated-btn { color: #42b14c; }
+      /* Weblio側は #eBodyMcr を height:48px で固定していて中身を足しても枠が伸びない。
+         翻訳を入れたぶん白枠(#baseMcr)ごと下に広がるよう高さ固定を外す */
+      #eBodyMcr {
+        height: auto !important;
+      }
+      /* 左右のマージンはWeblioの意味(.contentMcr の margin:0 5px)に合わせる */
+      .weblio-translation {
+        margin: 6px 5px 5px;
+        padding-top: 6px;
+        border-top: 1px solid #ddd;
+        font-size: 13px;
+        line-height: 1.4;
+        text-align: left;
+        white-space: pre-wrap;
+      }
     </style>
     <div class="weblio-popup-content">${html}</div>
   `;
+
+  const content = shadow.querySelector(".weblio-popup-content");
 
   const addButton = shadow.querySelector(".wlaBtnTtlTng");
   if (addButton) {
@@ -180,22 +328,20 @@ function showPopup(html, word, rawWord, range, anchorRect) {
       closePopup();
     });
   }
+  appendPopupButtons(content, addButton, rawWord, range, anchorRect);
 
   document.body.appendChild(popupElement);
-  positionPopup(popupElement, shadow.querySelector(".weblio-popup-content"), anchorRect);
+  positionPopup(popupElement, content, anchorRect);
   // closePopup()でクリアされるので、表示後に貼り直す
   currentWord = word;
 
-  autoCloseTimer = setTimeout(() => closePopup({ releaseHover: true }), 10000);
+  startAutoCloseTimer();
 }
 
 // releaseHover: ユーザーの意思で閉じたのでない場合(オートクローズ・scroll)に立てる。
 // カーソルが単語に乗ったままでもmousemoveで再表示できるようにする
 function closePopup({ releaseHover = false } = {}) {
-  if (autoCloseTimer) {
-    clearTimeout(autoCloseTimer);
-    autoCloseTimer = null;
-  }
+  stopAutoCloseTimer();
   if (popupElement) {
     popupElement.remove();
     popupElement = null;
@@ -221,6 +367,28 @@ function addWordToAnki(word, rawWord, range) {
 
     // extractMarkedText は mark.js で定義された関数(同じcontent scriptワールドを共有)
     const marked = extractMarkedText(rawWord, range);
+    if (marked) {
+      chrome.runtime.sendMessage({ marked });
+    }
+  });
+}
+
+// 選択した原文を表面、その翻訳を裏面にしたカードを追加する。
+// translation が null(翻訳ボタンを押していない)なら service worker 側で翻訳させる
+function addTranslatedNoteToAnki(text, translation, range) {
+  // 長文まるごと選択できるのでトーストに全部は載せない
+  const label = text.length > 40 ? `${text.slice(0, 40)}…` : text;
+
+  chrome.runtime.sendMessage({ type: "addTranslatedNote", text, translation }, (response) => {
+    if (response && response.success) {
+      showNotification(`Added "${label}" to Anki`);
+    } else if (response && response.duplicate) {
+      showNotification(`"${label}" already in your deck`);
+    } else {
+      showNotification(`Anki error: ${response?.error || chrome.runtime.lastError?.message || "unknown"}`);
+    }
+
+    const marked = extractMarkedText(text, range);
     if (marked) {
       chrome.runtime.sendMessage({ marked });
     }
@@ -311,10 +479,16 @@ document.addEventListener("mousemove", (event) => {
   }, 300);
 });
 
-// 句動詞・熟語(take off など)を引けるように単語間のスペースを許す。
-// 段落まるごと選択したときに長文を投げないよう語数で頭打ちにする
-const MAX_SELECTION_WORDS = 4;
-const SELECTION_PATTERN = /^[a-zA-Z]+(?: [a-zA-Z]+)*$/;
+// 句動詞・熟語(take off など)や記号混じり(don't worry, be happy)も引けるようにする。
+// 記号込みだとWeblioは「英和・和英辞典で一致する英語は見つかりませんでした。」を返すが、
+// そのHTMLにも+ボタンは入っているのでポップアップは出して翻訳ボタンから引かせる。
+// ASCII印字可能文字("' など含む)に加えて、Webページで多い約物(“ ” ‘ ’ – — …)も通す。
+// 英字を1文字以上含むことを条件にして日本語や記号だけの選択は弾く。
+// 長さは段落まるごとの選択(=翻訳ボタン用)まで許し、ページ全選択だけ弾ければよいので
+// Google翻訳が余裕で捌ける範囲(実測5400文字までOK)に収まる文字数で頭打ちにする。
+// なおWeblio側は31文字以上だと+ボタンを返さず、51文字以上だと翻訳誘導ページを返す
+const MAX_SELECTION_CHARS = 2000;
+const SELECTION_PATTERN = /^(?=[^a-zA-Z]*[a-zA-Z])[\x20-\x7e‘’“”–—…]+$/;
 
 let selectionTimer = null;
 
@@ -332,8 +506,8 @@ async function lookupSelection() {
 
   // 改行や連続スペースを潰してから判定する(複数行にまたがる選択も引けるように)
   const phrase = rawText.replace(/\s+/g, " ");
+  if (phrase.length > MAX_SELECTION_CHARS) return;
   if (!SELECTION_PATTERN.test(phrase)) return;
-  if (phrase.split(" ").length > MAX_SELECTION_WORDS) return;
 
   const word = phrase.toLowerCase();
   if (currentWord === word) return;

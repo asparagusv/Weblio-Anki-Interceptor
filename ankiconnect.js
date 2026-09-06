@@ -72,6 +72,27 @@ async function addNote(deckName, word, meaning, audio) {
 
 
 
+// 画像検索ボタンを裏面に追記してAnki側に反映する。戻り値はボタン込みの裏面
+// noteIdはaddNoteの戻り値でしか分からないので、addNote成功後に呼ぶ想定
+async function appendImageSearchButton(noteId, word, meaning) {
+  const imageSearchUrl =
+    "https://www.google.com/search?q=" +
+    encodeURIComponent(word) +
+    "+definition+images&tbm=isch&noteId=" +
+    encodeURIComponent(noteId);
+
+  const imageSearchButton =
+    '<a href="' +
+    imageSearchUrl +
+    '" style="margin-left:15px"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a9c7e3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M20.4 14.5L16 10 4 20"/></svg></a>';
+
+  const answer = meaning + imageSearchButton;
+  await invoke("updateNoteFields", 6, {
+    note: { id: noteId, fields: { 裏面: answer } },
+  });
+  return answer;
+}
+
 function addNoteErrorHandler(result, word, meaning) {
   //　重複時
   if (result === "cannot create note because it is a duplicate") {

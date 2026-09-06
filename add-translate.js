@@ -3,9 +3,14 @@ import { translate } from '@vitalets/google-translate-api';
 
 async function addNoteWithTranslatedText(info) {
   const { text } = await translate(info.selectionText, { to: 'ja' });
-  console.log(text);
   const result = await addNote(await getDeckName(), info.selectionText, text);
-  addNoteErrorHandler(result, info.selectionText, text);
+
+  let answer = text;
+  if (result !== "cannot create note because it is a duplicate") {
+    answer = await appendImageSearchButton(result, info.selectionText, text);
+  }
+
+  addNoteErrorHandler(result, info.selectionText, answer);
   getMarkedParentElement();
 }
 

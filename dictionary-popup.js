@@ -7,6 +7,8 @@ let currentWord = null;
 let hoverTimer = null;
 let lastHoveredWord = null;
 let hoveredRange = null;
+// ホバーした単語を含むテキストと、その中での単語の開始位置。イディオム候補を組むのに使う
+let hoveredContext = null;
 let autoCloseTimer = null;
 
 // 英数字かどうかを判定
@@ -80,18 +82,20 @@ function getWordUnderCursor(clientX, clientY) {
     const endIndex = searchEndIndex(text, offset);
     const word = text.substring(startIndex, endIndex).trim();
     if (!word) return null;
-    return { word, range };
+    // text/startIndex はイディオム候補を組むための周辺文脈
+    // ponytail: 文脈はホバーしたテキストノード1つぶんだけ。<b>keep</b> stress at bay のように
+    // インライン要素で分断されていると候補が途中で切れる。ブロック要素まで遡って
+    // offsetを取り直すのは取りこぼしが目立ってからでいい
+    return { word, range, text, start: startIndex };
   } catch (_) {
     return null;
   }
 }
 
-// Weblioのポップアップ辞書HTMLを取得(CORSにかかるためbackground側に代行させる)
-async function fetchDictionaryHTML(word) {
-  const apiUrl = `https://api.weblio.jp/act/quote/v_1_0/e/?q=${encodeURIComponent(word)}&type=emicro&opul=chrome-extension%3A%2F%2F`;
-
+// WeblioのHTMLを取得(CORSにかかるためbackground側に代行させる)
+async function fetchWeblioUrl(url) {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: "fetchWeblio", url: apiUrl }, (res) => {
+    chrome.runtime.sendMessage({ type: "fetchWeblio", url }, (res) => {
       if (chrome.runtime.lastError) {
         console.error("[weblio] Dictionary fetch error:", chrome.runtime.lastError.message);
         resolve(null);
@@ -105,6 +109,98 @@ async function fetchDictionaryHTML(word) {
       resolve(res.text);
     });
   });
+}
+
+// ポップアップ辞書の1件ぶんのHTML
+function fetchDictionaryHTML(word) {
+  return fetchWeblioUrl(
+    `https://api.weblio.jp/act/quote/v_1_0/e/?q=${encodeURIComponent(word)}&type=emicro&opul=chrome-extension%3A%2F%2F`
+  );
+}
+
+// Weblioは見出しが見つからないとき見出しリンク(a.barL.title)を返さないので、その有無でヒット判定する。
+// (Tatoeba)は例文コーパスで he opened the door→彼はドアをあけた。が丸ごと当たるので常に捨てる
+const EXAMPLE_CORPUS_SOURCE = "(Tatoeba)";
+// (Weblio)は辞書ではなく自動生成の層。本物のイディオム(go the extra mile→更に努力する)と
+// ただの直訳(open the door→とびら開けて)が混ざっていて、出典でも定義文でも見分けられない。
+// 実測では普通の「動詞+the+名詞」25件のうち15件がこの層にヒットするので、
+// 採用する前に isIdiomEntry() で裏を取る
+const AUTO_GENERATED_SOURCE = "(Weblio)";
+// 定義文に日本語が無いヒットは英英の記述しか無いので捨てる。
+// Wiktionaryの語源ページ(steal one's thunder→Based on a 1704 quote from John Dennis)、
+// 文法注記(change someone's mind→third-person singular…)、
+// 活用形ページ(opened the door→simple past and past participle of…)がこれに当たる。
+// 実測: イディオム18件は全部日本語あり、落ちるのは上の3件だけ
+const JAPANESE = /[぀-ヿ㐀-鿿]/;
+
+function parseWeblioHit(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const title = doc.querySelector("a.barL.title");
+  if (!title) return null;
+  const source = doc.querySelector(".dctCr")?.textContent.trim() || "";
+  if (source === EXAMPLE_CORPUS_SOURCE) return null;
+  const headword = title.textContent.trim();
+  const body = doc.querySelector(".contentMcr")?.textContent.trim() || "";
+  if (!JAPANESE.test(body)) return null;
+  // Wiktionaryの文法注記ページは定義文が見出しの繰り返しで始まる
+  // (lose his temper → "lose his temper (三人称単数 現在形 …")。意味は書かれていない
+  if (body.startsWith(headword)) return null;
+  return { headword, needsVerify: source === AUTO_GENERATED_SOURCE };
+}
+
+// 同じ文の別の単語にホバーすると候補が大きく重なるので、問い合わせをPromiseごと使い回す
+const idiomCache = new Map();
+function cached(key, fetcher) {
+  if (!idiomCache.has(key)) idiomCache.set(key, fetcher());
+  return idiomCache.get(key);
+}
+
+// 見出しページに Wiktionary英語版 の節があるかでイディオムか直訳かを分ける。
+// 実測: イディオム16件中15件に有り、直訳17件中1件のみ(open the door)。
+// ページは150〜300KBと重いので、順位1位が自動生成層だったときの1回だけに限る
+function isIdiomEntry(query) {
+  return cached(`wiktionary:${query}`, async () => {
+    const html = await fetchWeblioUrl(`https://ejje.weblio.jp/content/${encodeURIComponent(query)}`);
+    return !!html && html.includes("Wiktionary英語版");
+  });
+}
+
+// ホバーした単語の周りのn-gramを一斉に引いて、ヒットしたうち一番長いものを返す。
+// 直列だと語数ぶん待つので必ず並列。Weblioは1件130〜280msなので全部で300ms前後に収まる
+async function lookupIdiom(text, wordStart) {
+  // buildIdiomCandidates は idiom-candidates.js で定義(同じcontent scriptワールドを共有)
+  const candidates = buildIdiomCandidates(text, wordStart);
+  const hits = [];
+  await Promise.all(
+    candidates.map(async (candidate) => {
+      const html = await cached(candidate.query, () => fetchDictionaryHTML(candidate.query));
+      if (!html) return;
+      const hit = parseWeblioHit(html);
+      if (hit) hits.push({ ...candidate, ...hit, html });
+    })
+  );
+  // 長い候補ほど具体的。同じ語数なら辞書のヒットを自動生成層より先に
+  // (cutting corners→ごまかし, 手抜き より cut corners→最も安易な方法をとる の方が良い)、
+  // 次に原形。自動生成層には活用形の項目もあって、そちらは意味が薄い
+  // (changed one's mind→気が変わった より change one's mind→気を変える, 心変わりする…)。
+  // それも同じなら本文にそのまま出ている並びを優先する
+  hits.sort(
+    (a, b) =>
+      b.size - a.size ||
+      a.needsVerify - b.needsVerify ||
+      b.lemma - a.lemma ||
+      a.derived - b.derived
+  );
+  // 裏取りは重いので上位2件まで。落ちるのはその候補だけで、下位の自動生成層は生かす
+  // (the elephant in the room は裏取りに落ちるが、1つ短い elephant in the room は通る)。
+  // 2件とも投機的に並列で引く。直列だと落ちたときに1ページぶん待たされる
+  const verifying = hits.filter((hit) => hit.needsVerify).slice(0, 2);
+  const verified = new Map(
+    await Promise.all(
+      verifying.map(async (hit) => [hit.query, await isIdiomEntry(hit.query)])
+    )
+  );
+  return hits.find((hit) => !hit.needsVerify || verified.get(hit.query)) || null;
 }
 
 // Google翻訳(service worker側のwebpackバンドル)に翻訳を代行させる
@@ -437,6 +533,7 @@ document.addEventListener("mousemove", (event) => {
   if (!hovered || !/^[a-zA-Z]+$/.test(hovered)) {
     lastHoveredWord = null;
     hoveredRange = null;
+    hoveredContext = null;
     if (hoverTimer) {
       clearTimeout(hoverTimer);
       hoverTimer = null;
@@ -450,6 +547,7 @@ document.addEventListener("mousemove", (event) => {
 
   lastHoveredWord = hovered;
   hoveredRange = hit.range;
+  hoveredContext = { text: hit.text, start: hit.start };
   if (hoverTimer) {
     clearTimeout(hoverTimer);
   }
@@ -464,14 +562,25 @@ document.addEventListener("mousemove", (event) => {
     }
     currentWord = word;
     const range = hoveredRange;
+    const context = hoveredContext;
 
-    const html = await fetchDictionaryHTML(word);
-    if (html) {
+    // 単語そのものとイディオム候補を同時に投げる。イディオムが当たればそちらを見せ、
+    // 外れたら単語の結果に落とすので、待ち時間は今までと変わらない
+    const [html, idiom] = await Promise.all([
+      cached(word, () => fetchDictionaryHTML(word)),
+      context ? lookupIdiom(context.text, context.start) : null,
+    ]);
+    if (idiom || html) {
       // fetch中にスクロールされている可能性があるので、表示直前に単語の位置を測り直す
       const anchorRect = range
         ? range.getBoundingClientRect()
         : new DOMRect(event.clientX, event.clientY, 0, 0);
-      showPopup(html, word, hovered, range, anchorRect);
+      // 第3引数(rawWord)はmark.jsが本文との文字列一致で<mark>位置を探すのに使うので、
+      // 本文に無い並びになりうるイディオムではなく、ホバーした単語のままにする
+      showPopup(idiom ? idiom.html : html, idiom ? idiom.headword : word, hovered, range, anchorRect);
+      // showPopupはcurrentWordに見出し語を入れるが、再ホバーの重複fetch判定は
+      // ホバーした単語で行うので戻す
+      currentWord = word;
     } else {
       // 取得失敗のままcurrentWordを握ると、その単語が二度と引けなくなる
       currentWord = null;
@@ -515,12 +624,29 @@ async function lookupSelection() {
 
   const range = sel.rangeCount ? sel.getRangeAt(0) : null;
 
-  const html = await fetchDictionaryHTML(word);
-  if (html) {
+  // 選んだ形のままでは見出しに無いことがある(get his act together はMISSで
+  // get one's act together が見出し)。ホバーと同じ変形を並列で投げて、
+  // 選んだ形が外れたときだけ差し替える。選んだ形が当たっていればそちらが優先
+  // buildPhraseVariants は idiom-candidates.js で定義(同じcontent scriptワールドを共有)
+  const variants = buildPhraseVariants(phrase);
+  const [html, ...variantHtml] = await Promise.all([
+    fetchDictionaryHTML(word),
+    ...variants.map((v) => cached(v.query, () => fetchDictionaryHTML(v.query))),
+  ]);
+  let shown = html;
+  let headword = word;
+  if (!html || !parseWeblioHit(html)) {
+    const index = variantHtml.findIndex((candidate) => candidate && parseWeblioHit(candidate));
+    if (index >= 0) {
+      shown = variantHtml[index];
+      headword = parseWeblioHit(shown).headword;
+    }
+  }
+  if (shown) {
     // fetch中にスクロールされている可能性があるので、表示直前に選択範囲の位置を測り直す
     const anchorRect = range ? range.getBoundingClientRect() : new DOMRect(0, 0, 0, 0);
     // extractMarkedTextは本文との文字列一致で<mark>位置を探すので、正規化前の選択文字列を渡す
-    showPopup(html, word, rawText, range, anchorRect);
+    showPopup(shown, headword, rawText, range, anchorRect);
   } else {
     // 取得失敗のままcurrentWordを握ると、その単語が二度と引けなくなる
     currentWord = null;

@@ -24,6 +24,7 @@
       "js": [
         "content.js",
         "mark.js",
+        "idiom-candidates.js",
         "dictionary-popup.js"
       ]
     }

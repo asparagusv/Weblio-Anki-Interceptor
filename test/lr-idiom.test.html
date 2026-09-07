@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>idiom hover context / Language Reactor 実 DOM</title>
+<style>
+  .lr-dots { display: none; }
+  .lr-translation { display: none; }
+  .lr-toolbar { position: absolute; left: -9999px; }
+</style>
+
+<!-- 単語ごとに別々の<span>へ分かれているページ(Language Reactorの字幕)でも、
+     ホバーした単語の周辺文脈からイディオム候補が組めることを確認する -->
+<div id="lr">
+  <span class="lr-word"><span class="lr-dots">...</span>Regular</span>
+  <span class="lr-word"><span class="lr-dots">...</span>exercise</span>
+  <span class="lr-word"><span class="lr-dots">...</span>helps</span>
+  <span class="lr-word"><span class="lr-dots">...</span>keep</span>
+  <span class="lr-word" id="lr-target"><span class="lr-dots">...</span>stress</span>
+  <span class="lr-word"><span class="lr-dots">...</span>at</span>
+  <span class="lr-word"><span class="lr-dots">...</span>bay.</span>
+  <div class="lr-toolbar"><span>Save Phrase</span></div>
+</div>
+
+<pre id="out"></pre>
+
+<script>
+  // mark.js/idiom-candidates.js は content script 前提なので chrome API をスタブする
+  window.chrome = { runtime: { onMessage: { addListener() {} } } };
+</script>
+<script src="../mark.js"></script>
+<script src="../idiom-candidates.js"></script>
+<script>
+  const results = [];
+  function check(name, pass, detail) {
+    results.push((pass ? "PASS" : "FAIL") + " " + name + (pass ? "" : "\n     " + detail));
+  }
+
+  // ホバーした単語のテキストノード上に collapsed Range を作る(dictionary-popup.jsの
+  // getWordUnderCursorと同じ形)
+  const target = document.getElementById("lr-target");
+  const textNode = target.lastChild;
+  const range = document.createRange();
+  range.setStart(textNode, 0);
+  range.collapse(true);
+
+  // getWordUnderCursorが行うのと同じ手順: ブロック要素まで遡って周辺文脈を組み立てる
+  const block = findBlockAncestor(range);
+  const collected = collectVisibleText(block, { node: textNode, offset: 0 });
+  check("周辺文脈にツールチップの '...' が混入しない", !collected.text.includes("..."), collected.text);
+  check("周辺文脈に Save Phrase が混入しない", !collected.text.includes("Save Phrase"), collected.text);
+  check("周辺文脈が単語をまたいで1文に組み上がる",
+    collected.text.includes("Regular exercise helps keep stress at bay."),
+    JSON.stringify(collected.text));
+  check("ホバー位置が周辺文脈中の正しいオフセットに解決される",
+    collected.text.slice(collected.targetIndex, collected.targetIndex + "stress".length) === "stress",
+    "targetIndex=" + collected.targetIndex + " text=" + JSON.stringify(collected.text));
+
+  // 単語ごとに分かれた<span>越しでも、hoverした語からイディオム候補が組める
+  // (窓が前後の別の<span>にまたがっても切れない)ことを確認する
+  const candidates = buildIdiomCandidates(collected.text, collected.targetIndex).map((c) => c.query);
+  check("熟語候補 'keep at bay' が組み立てられる", candidates.includes("keep at bay"), JSON.stringify(candidates));
+
+  const failed = results.filter((r) => r.startsWith("FAIL")).length;
+  results.push("");
+  results.push(failed === 0 ? "ALL PASS" : failed + " FAILED");
+  document.getElementById("out").textContent = results.join("\n");
+</script>

@@ -72,21 +72,33 @@ function getWordUnderCursor(clientX, clientY) {
     const offset = range.startOffset;
     if (node?.nodeType !== Node.TEXT_NODE) return null;
 
-    const text = node.textContent || "";
-    if (!text) return null;
+    const raw = node.textContent || "";
+    if (!raw) return null;
 
-    const code = text.charCodeAt(offset);
+    const code = raw.charCodeAt(offset);
     if (!isEnglishCharacter(code)) return null;
 
-    const startIndex = searchStartIndex(text, offset);
-    const endIndex = searchEndIndex(text, offset);
-    const word = text.substring(startIndex, endIndex).trim();
+    const startIndex = searchStartIndex(raw, offset);
+    const endIndex = searchEndIndex(raw, offset);
+    const word = raw.substring(startIndex, endIndex).trim();
     if (!word) return null;
-    // text/startIndex はイディオム候補を組むための周辺文脈
-    // ponytail: 文脈はホバーしたテキストノード1つぶんだけ。<b>keep</b> stress at bay のように
-    // インライン要素で分断されていると候補が途中で切れる。ブロック要素まで遡って
-    // offsetを取り直すのは取りこぼしが目立ってからでいい
-    return { word, range, text, start: startIndex };
+
+    // text/start はイディオム候補を組むための周辺文脈。テキストノード1つぶんだけだと
+    // <b>keep</b> stress at bay のようにインライン要素で分断された文や、
+    // Language Reactorの字幕のように単語ごとに別々の<span>に分かれているページで
+    // 前後の単語が見えない。mark.jsのcollectVisibleTextでブロック要素全体から
+    // 組み立て直す(findBlockAncestor/collectVisibleTextはmark.jsで定義、同じワールドを共有)
+    let text = raw;
+    let start = startIndex;
+    const block = findBlockAncestor(range);
+    if (block) {
+      const collected = collectVisibleText(block, { node, offset: startIndex });
+      if (collected.targetIndex >= 0) {
+        text = collected.text;
+        start = collected.targetIndex;
+      }
+    }
+    return { word, range, text, start };
   } catch (_) {
     return null;
   }

@@ -26,10 +26,18 @@ function escapeHtml(text) {
 // position:absolute の吹き出しやボタンが文書順でそのまま混ざってしまうため。
 // Language Reactor の字幕では単語ごとのツールチップ(訳語)と Save Phrase ボタンが
 // これに当たり、中の <br> が改行を作って文まで分断していた。
-function collectVisibleText(element) {
+// target(テキストノードとその中のoffset)を渡すと、そのテキストノードが出力の
+// 何文字目に当たるかも一緒に返す。ホバーした単語が独立した<span>に分かれている
+// ページ(Language Reactorの字幕など)でイディオム候補を組むのに周辺文脈と単語位置の両方が要る
+function collectVisibleText(element, target) {
   let text = "";
+  let targetIndex = -1;
   for (const node of element.childNodes) {
     if (node.nodeType === Node.TEXT_NODE) {
+      if (target && node === target.node && targetIndex < 0) {
+        // ソースの改行やインデントの畳み方を本文と揃えるため、offset手前だけ切って同じ変換をかける
+        targetIndex = text.length + node.data.slice(0, target.offset).replace(/\s+/g, " ").length;
+      }
       // ソースの改行やインデントは CSS と同じく空白1つに畳む。
       // ここを畳まないと後段の行分割がソースの折り返し位置で文を切ってしまう
       text += node.data.replace(/\s+/g, " ");
@@ -48,10 +56,14 @@ function collectVisibleText(element) {
 
     const isBlock = !style.display.startsWith("inline");
     if (isBlock) text += "\n";
-    text += collectVisibleText(node);
+    const child = collectVisibleText(node, target);
+    if (target && child.targetIndex >= 0 && targetIndex < 0) {
+      targetIndex = text.length + child.targetIndex;
+    }
+    text += child.text;
     if (isBlock) text += "\n";
   }
-  return text;
+  return { text, targetIndex };
 }
 
 // selectedText を含むブロック要素から見た目どおりの1行を取り出し、
@@ -65,7 +77,7 @@ function extractMarkedText(selectedText, range) {
 
   // 計算済みスタイルを見て集めるので、必ず DOM 上のライブ要素を渡すこと。
   // cloneNode したものはレンダリング対象外で、スタイルも innerText も当てにならない。
-  const text = collectVisibleText(block);
+  const text = collectVisibleText(block).text;
 
   // 改行はブロックの境界。選択語と同じ行だけ使う
   const line =

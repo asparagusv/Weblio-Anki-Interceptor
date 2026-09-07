@@ -51,6 +51,14 @@ assert.ok(
 // -ing / -ed は綴りが復元しきれないので両方投げる
 assert.ok(queries("He is making sense now.", "sense").includes("make sense"));
 assert.ok(queries("They looked up the word.", "up").includes("look up"));
+// than は前置詞でも小辞でもないが、機能語ゲートに入れないと
+// better late than never のような比較のイディオムが3語超で全落ちする
+assert.ok(
+  queries("Better late than never, he finished the report.", "never").includes(
+    "better late than never"
+  ),
+  "better late than never が出ない"
+);
 // goes → go。-es規則(s/x/z/ch/sh の後ろ)に当たらず goe になっていた
 for (const text of [
   "Go the extra mile for your customers.",

@@ -18,7 +18,7 @@
   // 内容語だけの並び(regular exercise helps)を捨ててリクエスト数を減らす
   const FUNCTION_WORDS = new Set([
     ...PREPOSITIONS, ...PARTICLES, ...POSSESSIVES, ...POSSESSIVE_SLOTS,
-    "a", "an", "the", "and", "or", "it", "no", "not",
+    "a", "an", "the", "and", "or", "it", "no", "not", "than",
   ]);
 
   // 冠詞・代名詞・程度の副詞。2語の候補に混じると、イディオムではなくただの直訳がヒットする

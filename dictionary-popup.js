@@ -533,6 +533,9 @@ function showNotification(message) {
   }, 3000);
 }
 
+// ホバーで拾う単語のゲート。rear-ended / well-known のようなハイフン複合語も許す
+const HOVER_WORD_PATTERN = /^[a-zA-Z]+(-[a-zA-Z]+)*$/;
+
 document.addEventListener("mousemove", (event) => {
   // 選択がある場合はホバー処理をスキップ(選択は別ハンドラで即時処理)
   const sel = window.getSelection();
@@ -542,7 +545,7 @@ document.addEventListener("mousemove", (event) => {
 
   const hit = getWordUnderCursor(event.clientX, event.clientY);
   const hovered = hit?.word;
-  if (!hovered || !/^[a-zA-Z]+$/.test(hovered)) {
+  if (!hovered || !HOVER_WORD_PATTERN.test(hovered)) {
     lastHoveredWord = null;
     hoveredRange = null;
     hoveredContext = null;

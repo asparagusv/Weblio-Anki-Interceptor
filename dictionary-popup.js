@@ -528,7 +528,38 @@ function showNotification(message) {
   notification.textContent = message;
   document.body.appendChild(notification);
 
+  // fixedの基準はレイアウトビューポートなので、ピンチズームで可視領域(ビジュアル
+  // ビューポート)が狭まると right:20px の位置が画面外に出る。可視領域の右上へ
+  // 追従させ、ズーム中でもトーストが見えるようにする。
+  // さらに、fixedはズームで拡大されるため scaleの逆数で縮めて画面上の大きさを保つ
+  const viewport = window.visualViewport;
+  let frame = 0;
+  const place = () => {
+    frame = 0;
+    if (!viewport) return;
+    const scale = viewport.scale || 1;
+    notification.style.right = "auto";
+    notification.style.transformOrigin = "top left";
+    notification.style.transform = `scale(${1 / scale})`;
+    notification.style.left = `${
+      viewport.offsetLeft + viewport.width - (notification.offsetWidth + 20) / scale
+    }px`;
+    notification.style.top = `${viewport.offsetTop + 20 / scale}px`;
+  };
+  const schedulePlace = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(place);
+  };
+  place();
+  viewport?.addEventListener("resize", schedulePlace);
+  viewport?.addEventListener("scroll", schedulePlace);
+  window.addEventListener("resize", schedulePlace);
+
   setTimeout(() => {
+    viewport?.removeEventListener("resize", schedulePlace);
+    viewport?.removeEventListener("scroll", schedulePlace);
+    window.removeEventListener("resize", schedulePlace);
+    cancelAnimationFrame(frame);
     notification.remove();
   }, 3000);
 }

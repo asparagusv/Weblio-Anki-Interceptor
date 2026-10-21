@@ -4,12 +4,60 @@
 
 let popupElement = null;
 let currentWord = null;
+// ポップアップ内を操作したら、後から届いたイディオムで再描画しない
+// (翻訳を押した直後に差し替わって翻訳が消えるのを防ぐ)
+let popupLocked = false;
 let hoverTimer = null;
 let lastHoveredWord = null;
 let hoveredRange = null;
 // ホバーした単語を含むテキストと、その中での単語の開始位置。イディオム候補を組むのに使う
 let hoveredContext = null;
 let autoCloseTimer = null;
+// mousemoveのたびに同じログを積まないための直近ヒット状態
+let lastHitKey = null;
+
+// ホバー診断ログ。ホバーが出ないときに「どの段階で落ちたか」を後から追えるようにする。
+// ページ側のコンソール/E2Eからも読めるよう、直近のログを隠し要素に書き出す
+// (content scriptはアイソレーテッドワールドなのでwindowを共有できない)
+const HOVER_TRACE_LIMIT = 200;
+const hoverTrace = [];
+let traceNode = null;
+let traceSyncScheduled = false;
+
+function traceEnv() {
+  const body = document.body;
+  const style = body ? getComputedStyle(body) : null;
+  return {
+    href: location.href,
+    top: window === window.top,
+    bodyTransform: style?.transform || null,
+    bodyPosition: style?.position || null,
+  };
+}
+
+function syncTraceNode() {
+  traceSyncScheduled = false;
+  if (!document.documentElement) return;
+  if (!traceNode || !traceNode.isConnected) {
+    traceNode = document.createElement("pre");
+    traceNode.id = "__weblio_hover_trace";
+    traceNode.hidden = true;
+    traceNode.style.cssText = "display:none !important";
+    document.documentElement.appendChild(traceNode);
+  }
+  traceNode.textContent = JSON.stringify(hoverTrace.slice(-50));
+}
+
+function trace(stage, detail = {}) {
+  const entry = { t: Math.round(performance.now()), stage, ...detail };
+  hoverTrace.push(entry);
+  if (hoverTrace.length > HOVER_TRACE_LIMIT) hoverTrace.shift();
+  if (!traceSyncScheduled) {
+    traceSyncScheduled = true;
+    queueMicrotask(syncTraceNode);
+  }
+  return entry;
+}
 
 // 英数字かどうかを判定
 const isEnglishCharacter = (code) => {
@@ -49,39 +97,170 @@ const searchEndIndex = (text, index) => {
   return text.length;
 };
 
-// ポイント座標から Range を取得(クロスブラウザ)
-function getRangeFromPoint(clientX, clientY) {
-  if (document.caretRangeFromPoint) {
-    return document.caretRangeFromPoint(clientX, clientY);
+// open shadow root を再帰的に辿って最前面の要素を返す。document.elementFromPoint は
+// shadow root の中まで見てくれないので、ホスト要素から elementFromPoint を呼び直す
+function deepElementFromPoint(clientX, clientY) {
+  let el = document.elementFromPoint(clientX, clientY);
+  for (let depth = 0; el && el.shadowRoot && depth < 10; depth += 1) {
+    const inner = el.shadowRoot.elementFromPoint?.(clientX, clientY);
+    if (!inner || inner === el) break;
+    el = inner;
   }
-  const pos = document.caretPositionFromPoint?.(clientX, clientY);
-  if (!pos) return null;
-  const r = document.createRange();
-  r.setStart(pos.offsetNode, pos.offset);
-  r.setEnd(pos.offsetNode, pos.offset);
-  return r;
+  return el;
 }
 
-// マウスポインターの位置から英単語とそのRangeを抽出
+// root(Document か ShadowRoot)からキャレット位置を取る。Chrome の
+// caretRangeFromPoint は Document にしか無いので、ShadowRoot では仕様側の
+// caretPositionFromPoint にフォールバックする
+function caretRangeFromRoot(root, clientX, clientY) {
+  if (root.caretRangeFromPoint) {
+    return root.caretRangeFromPoint(clientX, clientY);
+  }
+  if (root.caretPositionFromPoint) {
+    const pos = root.caretPositionFromPoint(clientX, clientY);
+    if (!pos) return null;
+    const r = document.createRange();
+    r.setStart(pos.offsetNode, pos.offset);
+    r.setEnd(pos.offsetNode, pos.offset);
+    return r;
+  }
+  return null;
+}
+
+// ポイント座標から Range を取得(クロスブラウザ)。open shadow root の中の
+// テキストも指せるよう、返ってきたノードの root が ShadowRoot ならその中で引き直す
+function getRangeFromPoint(clientX, clientY) {
+  let root = document;
+  let range = null;
+  for (let depth = 0; depth < 10; depth += 1) {
+    const inner = caretRangeFromRoot(root, clientX, clientY);
+    if (!inner) return range;
+    range = inner;
+    const node = inner.startContainer;
+    const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    const scope = el?.getRootNode?.();
+    if (!(scope instanceof ShadowRoot) || scope === root) return range;
+    root = scope;
+  }
+  return range;
+}
+
+// caretRangeFromPoint がテキストノードを返さない場合のフォールバック。
+// shadow root 内では Document.caretRangeFromPoint が外側の要素を返すことがあり、
+// 行の余白やinline要素の境界では element ノードになる。候補要素の中の
+// テキストノードごとに「ポインタがその行に乗っているか」を先に見て、
+// 乗っている行の単語だけをRangeで走査する(巨大コンテナでも全文字を舐めない)
+const FALLBACK_MAX_TEXT_NODES = 2000;
+const FALLBACK_WORD_PATTERN = /[0-9A-Za-z._-]+/g;
+
+function wordRangeInTextNode(node, clientX, clientY) {
+  const data = node.data;
+  FALLBACK_WORD_PATTERN.lastIndex = 0;
+  let match;
+  while ((match = FALLBACK_WORD_PATTERN.exec(data))) {
+    const range = document.createRange();
+    range.setStart(node, match.index);
+    range.setEnd(node, match.index + match[0].length);
+    for (const rect of range.getClientRects()) {
+      if (
+        clientX >= rect.left - 1 && clientX <= rect.right + 1 &&
+        clientY >= rect.top && clientY <= rect.bottom
+      ) {
+        return { range, node, offset: match.index };
+      }
+    }
+  }
+  return null;
+}
+
+function findWordRangeAtPoint(clientX, clientY, roots) {
+  for (const root of roots) {
+    if (!root?.isConnected) continue;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let textNode;
+    let checked = 0;
+    while ((textNode = walker.nextNode()) && checked < FALLBACK_MAX_TEXT_NODES) {
+      checked += 1;
+      if (!textNode.data.trim()) continue;
+
+      // まずこのテキストノードの行矩形にポインタが入っているかを見る。
+      // 入っていない行の単語を1つずつRangeにするのは無駄なので飛ばす
+      const lineRange = document.createRange();
+      lineRange.selectNodeContents(textNode);
+      let onLine = false;
+      for (const rect of lineRange.getClientRects()) {
+        if (
+          clientY >= rect.top - 1 && clientY <= rect.bottom + 1 &&
+          clientX >= rect.left - 2 && clientX <= rect.right + 2
+        ) {
+          onLine = true;
+          break;
+        }
+      }
+      if (!onLine) continue;
+
+      const hit = wordRangeInTextNode(textNode, clientX, clientY);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+// フォールバックの探索対象。caretの要素と最前面の要素は、pointer-events:noneや
+// 行の余白のせいで親子が逆転することがあるため、小さい(=テキストが少ない)方を先にする
+function fallbackRootsFor(range, clientX, clientY) {
+  const node = range?.startContainer;
+  const caretEl = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+  const deep = deepElementFromPoint(clientX, clientY);
+  const roots = [caretEl, deep].filter(Boolean);
+  roots.sort((a, b) => (a.textContent?.length || 0) - (b.textContent?.length || 0));
+  return roots;
+}
+
+// マウスポインターの位置から英単語とそのRangeを抽出。
+// 失敗時も reason を返す(なぜホバーが反応しないかをトレースに出すため)
 function getWordUnderCursor(clientX, clientY) {
   try {
-    const range = getRangeFromPoint(clientX, clientY);
-    if (!range) return null;
+    let range = getRangeFromPoint(clientX, clientY);
+    let node = range?.startContainer;
+    let offset = range?.startOffset;
+    let usedFallback = false;
 
-    const node = range.startContainer;
-    const offset = range.startOffset;
-    if (node?.nodeType !== Node.TEXT_NODE) return null;
+    if (!range || node?.nodeType !== Node.TEXT_NODE) {
+      const fallback = findWordRangeAtPoint(clientX, clientY, fallbackRootsFor(range, clientX, clientY));
+      if (!fallback) {
+        if (!range) return { reason: "no-range" };
+        return {
+          reason: "not-text",
+          nodeType: node?.nodeType,
+          tag: node?.nodeName,
+          element: deepElementFromPoint(clientX, clientY)?.nodeName,
+        };
+      }
+      range = fallback.range;
+      node = fallback.node;
+      offset = fallback.offset;
+      usedFallback = true;
+    }
 
     const raw = node.textContent || "";
-    if (!raw) return null;
+    if (!raw) return { reason: "empty-node" };
 
     const code = raw.charCodeAt(offset);
-    if (!isEnglishCharacter(code)) return null;
+    if (!isEnglishCharacter(code)) {
+      return { reason: "non-english", char: raw[offset], offset };
+    }
 
     const startIndex = searchStartIndex(raw, offset);
     const endIndex = searchEndIndex(raw, offset);
-    const word = raw.substring(startIndex, endIndex).trim();
-    if (!word) return null;
+    let word = raw.substring(startIndex, endIndex).trim();
+    // isEnglishCharacter は小数点・アンダースコア・ハイフンも単語の一部として扱うため、
+    // "accuracy." のように文末のピリオドまで入ってくる。前後の記号だけ落とし、
+    // well-known / 3.14 のような語中の記号は残す
+    const leadingPunct = (word.match(/^[._-]+/) || [""])[0].length;
+    word = word.slice(leadingPunct).replace(/[._-]+$/, "");
+    if (!word) return { reason: "empty-word" };
+    const wordStart = startIndex + leadingPunct;
 
     // text/start はイディオム候補を組むための周辺文脈。テキストノード1つぶんだけだと
     // <b>keep</b> stress at bay のようにインライン要素で分断された文や、
@@ -89,37 +268,64 @@ function getWordUnderCursor(clientX, clientY) {
     // 前後の単語が見えない。mark.jsのcollectVisibleTextでブロック要素全体から
     // 組み立て直す(findBlockAncestor/collectVisibleTextはmark.jsで定義、同じワールドを共有)
     let text = raw;
-    let start = startIndex;
+    let start = wordStart;
     const block = findBlockAncestor(range);
     if (block) {
-      const collected = collectVisibleText(block, { node, offset: startIndex });
+      const collected = collectVisibleText(block, { node, offset: wordStart });
       if (collected.targetIndex >= 0) {
         text = collected.text;
         start = collected.targetIndex;
       }
     }
-    return { word, range, text, start };
-  } catch (_) {
-    return null;
+    return {
+      word,
+      range,
+      text,
+      start,
+      nodeTag: node.parentElement?.nodeName,
+      inShadow: node.getRootNode() instanceof ShadowRoot,
+      fallback: usedFallback,
+    };
+  } catch (error) {
+    return { reason: "exception", error: error?.message || String(error) };
   }
 }
 
 // WeblioのHTMLを取得(CORSにかかるためbackground側に代行させる)
 async function fetchWeblioUrl(url) {
+  const started = performance.now();
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: "fetchWeblio", url }, (res) => {
-      if (chrome.runtime.lastError) {
-        console.error("[weblio] Dictionary fetch error:", chrome.runtime.lastError.message);
-        resolve(null);
-        return;
-      }
-      if (!res || !res.ok) {
-        console.error("[weblio] Dictionary fetch error:", res?.error || "unknown");
-        resolve(null);
-        return;
-      }
-      resolve(res.text);
-    });
+    try {
+      chrome.runtime.sendMessage({ type: "fetchWeblio", url }, (res) => {
+        const ms = Math.round(performance.now() - started);
+        if (chrome.runtime.lastError) {
+          trace("fetch-error", {
+            url, ms, error: chrome.runtime.lastError.message,
+          });
+          console.error("[weblio] Dictionary fetch error:", chrome.runtime.lastError.message);
+          resolve(null);
+          return;
+        }
+        if (!res || !res.ok) {
+          trace("fetch-error", { url, ms, status: res?.status, error: res?.error || "unknown" });
+          console.error("[weblio] Dictionary fetch error:", res?.status || "", res?.error || "unknown");
+          resolve(null);
+          return;
+        }
+        // 50件並列で投げるので、成功は遅いものだけ残す(全部残すとトレースが埋まる)
+        if (ms > 1500) trace("fetch-slow", { url, ms });
+        resolve(res.text);
+      });
+    } catch (error) {
+      // 拡張を再読み込み/更新すると、古いcontent scriptからのsendMessageは
+      // "Extension context invalidated." で同期的にthrowする。握らないと
+      // Promise.allごと落ちて、そのページでは二度とポップアップが出なくなる
+      trace("fetch-error", {
+        url, ms: Math.round(performance.now() - started), error: error?.message || String(error),
+      });
+      console.error("[weblio] Dictionary fetch error:", error?.message || error);
+      resolve(null);
+    }
   });
 }
 
@@ -163,8 +369,25 @@ function parseWeblioHit(html) {
 // 同じ文の別の単語にホバーすると候補が大きく重なるので、問い合わせをPromiseごと使い回す
 const idiomCache = new Map();
 function cached(key, fetcher) {
-  if (!idiomCache.has(key)) idiomCache.set(key, fetcher());
-  return idiomCache.get(key);
+  if (idiomCache.has(key)) return idiomCache.get(key);
+  const promise = Promise.resolve()
+    .then(fetcher)
+    .then((value) => {
+      // 通信失敗(null)は覚えない。一度失敗しただけの単語/候補が以降ずっと
+      // 引けなくなるうえ、同じ文脈の別の単語のPromise.allまで巻き添えで落ちる
+      if (value == null) idiomCache.delete(key);
+      return value;
+    })
+    .catch((error) => {
+      // sendMessageの同期throwや予期しない例外。1件の失敗でホバー全体を
+      // 落とさないようnull(=ヒットなし)に丸める
+      trace("lookup-error", { key, error: error?.message || String(error) });
+      console.error("[weblio] lookup error:", key, error?.message || error);
+      idiomCache.delete(key);
+      return null;
+    });
+  idiomCache.set(key, promise);
+  return promise;
 }
 
 // 見出しページに Wiktionary英語版 の節があるかでイディオムか直訳かを分ける。
@@ -183,10 +406,16 @@ async function lookupIdiom(text, wordStart) {
   // buildIdiomCandidates は idiom-candidates.js で定義(同じcontent scriptワールドを共有)
   const candidates = buildIdiomCandidates(text, wordStart);
   const hits = [];
+  const started = performance.now();
+  // 通信失敗(null)の件数。0でなければポップアップが出ない原因が通信側にあると分かる
+  let failed = 0;
   await Promise.all(
     candidates.map(async (candidate) => {
       const html = await cached(candidate.query, () => fetchDictionaryHTML(candidate.query));
-      if (!html) return;
+      if (!html) {
+        failed += 1;
+        return;
+      }
       const hit = parseWeblioHit(html);
       if (hit) hits.push({ ...candidate, ...hit, html });
     })
@@ -212,7 +441,16 @@ async function lookupIdiom(text, wordStart) {
       verifying.map(async (hit) => [hit.query, await isIdiomEntry(hit.query)])
     )
   );
-  return hits.find((hit) => !hit.needsVerify || verified.get(hit.query)) || null;
+  const chosen = hits.find((hit) => !hit.needsVerify || verified.get(hit.query)) || null;
+  trace("idiom-lookup", {
+    word: text.slice(wordStart, wordStart + 24),
+    candidates: candidates.length,
+    hits: hits.length,
+    failed,
+    chosen: chosen?.query || null,
+    ms: Math.round(performance.now() - started),
+  });
+  return chosen;
 }
 
 // Google翻訳(service worker側のwebpackバンドル)に翻訳を代行させる
@@ -357,23 +595,64 @@ function appendPopupButtons(content, addButton, sourceText, range, anchorRect) {
     e.preventDefault();
     e.stopPropagation();
     addTranslatedNoteToAnki(sourceText, translation, range);
-    closePopup();
+    closePopup({ releaseHover: true });
   });
+}
+
+// モーダル<dialog>が開いている間、その外側はinertになり、外側に置いた
+// popoverもダイアログより下に描画される(クリックも届かない)。ダイアログ内の
+// テキストにホバーしたときはダイアログの中に置く
+function isNodeInside(node, ancestor) {
+  while (node) {
+    if (node === ancestor) return true;
+    node = node.getRootNode?.().host || node.parentNode;
+  }
+  return false;
+}
+
+function popupMountFor(anchorRect) {
+  if (!anchorRect) return document.documentElement;
+  let dialogs;
+  try {
+    // :modal非対応の古いChromeではセレクタが例外になるので、通常配置に落とす
+    dialogs = document.querySelectorAll(":modal");
+  } catch {
+    return document.documentElement;
+  }
+  if (!dialogs.length) return document.documentElement;
+  const dialog = dialogs[dialogs.length - 1];
+  const x = anchorRect.left + anchorRect.width / 2;
+  const y = anchorRect.top + anchorRect.height / 2;
+  const hit = deepElementFromPoint(x, y);
+  return hit && isNodeInside(hit, dialog) ? dialog : document.documentElement;
 }
 
 // ポップアップを表示。rawWord/rangeは周辺文章を例文登録するために保持しておく
 // anchorRect: 引いた単語の位置(viewport座標)。ここに被らない位置へ出す
 function showPopup(html, word, rawWord, range, anchorRect) {
   closePopup();
+  popupLocked = false;
 
   popupElement = document.createElement("div");
   popupElement.id = "weblio-dictionary-popup";
-  // 位置は実サイズを測ってから決めるので、まずは画面外に置いてちらつきを防ぐ
+  // top layer に出す。ページ側のz-index・overflow:hidden・transformの影響を
+  // 受けず、position:fixedの基準をビューポートに保てる。モーダル<dialog>が
+  // 開いている間は外側がinertになるため、popupMountForで中へ入れる
+  popupElement.setAttribute("popover", "manual");
+  // 位置は実サイズを測ってから決めるので、まずは画面外に置いてちらつきを防ぐ。
+  // popoverのUAスタイル(inset/margin/border等)を打ち消してから自前で配置する
   popupElement.style.cssText = `
     position: fixed;
+    inset: auto;
     left: -9999px;
     top: 0;
-    z-index: 999999;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    overflow: visible;
+    z-index: 2147483647;
   `;
 
   // Weblio側HTMLに<style>タグが含まれるとlight DOMではページ全体に漏れてUIが崩れるため、Shadow DOMで隔離する
@@ -426,6 +705,7 @@ function showPopup(html, word, rawWord, range, anchorRect) {
   `;
 
   const content = shadow.querySelector(".weblio-popup-content");
+  content.addEventListener("pointerdown", () => { popupLocked = true; }, { once: true });
 
   const addButton = shadow.querySelector(".wlaBtnTtlTng");
   if (addButton) {
@@ -433,12 +713,21 @@ function showPopup(html, word, rawWord, range, anchorRect) {
       e.preventDefault();
       e.stopPropagation();
       addWordToAnki(word, rawWord, range);
-      closePopup();
+      closePopup({ releaseHover: true });
     });
   }
   appendPopupButtons(content, addButton, rawWord, range, anchorRect);
 
-  document.body.appendChild(popupElement);
+  // 通常はbodyではなくdocumentElementに置く。bodyにtransformが掛かっていると
+  // position:fixedの基準がbodyになってしまうため
+  const mount = popupMountFor(anchorRect);
+  mount.appendChild(popupElement);
+  // popover非対応のブラウザでは単なるposition:fixedのdivとして動く
+  try {
+    popupElement.showPopover?.();
+  } catch {
+    // すでに開いている等。位置決めは続行する
+  }
   positionPopup(popupElement, content, anchorRect);
   // closePopup()でクリアされるので、表示後に貼り直す
   currentWord = word;
@@ -451,12 +740,18 @@ function showPopup(html, word, rawWord, range, anchorRect) {
 function closePopup({ releaseHover = false } = {}) {
   stopAutoCloseTimer();
   if (popupElement) {
+    try {
+      popupElement.hidePopover?.();
+    } catch {
+      // 開いていない場合は無視
+    }
     popupElement.remove();
     popupElement = null;
   }
   // 表示中の重複fetchを防ぐためのガードなので、閉じたら解除する
   // (解除しないと同じ単語に再ホバーしてもポップアップが出なくなる)
   currentWord = null;
+  popupLocked = false;
   // mousemove側の連打防止ガード。これを残すとカーソルが単語Aに乗ったままの間
   // ずっとタイマーが張られず、単語Aから一度出るまで二度と表示できない
   if (releaseHover) {
@@ -503,10 +798,16 @@ function addTranslatedNoteToAnki(text, translation, range) {
   });
 }
 
-// service worker(add-example.js)からの結果通知をトーストで出す
-chrome.runtime.onMessage.addListener((request) => {
-  if (request && request.type === "notify") {
+// service worker(add-example.js)からの結果通知をトーストで出す。
+// 拡張ポップアップの「ホバー診断」からは直近のトレースを要求される
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (!request) return;
+  if (request.type === "notify") {
     showNotification(request.message);
+    return;
+  }
+  if (request.type === "getHoverTrace") {
+    sendResponse({ env: traceEnv(), trace: hoverTrace.slice(-50) });
   }
 });
 
@@ -567,26 +868,199 @@ function showNotification(message) {
 // ホバーで拾う単語のゲート。rear-ended / well-known のようなハイフン複合語も許す
 const HOVER_WORD_PATTERN = /^[a-zA-Z]+(-[a-zA-Z]+)*$/;
 
-document.addEventListener("mousemove", (event) => {
-  // 選択がある場合はホバー処理をスキップ(選択は別ハンドラで即時処理)
+// ホバーしてから表示するまでの待ち時間
+const HOVER_DELAY_MS = 150;
+// 通信失敗時の自動再試行(service workerのコールドスタート対策)
+const HOVER_RETRY_DELAYS = [350, 900];
+
+// 選択範囲の上にポインタがあるときだけホバーを止める。選択がページの別の場所に
+// 残っているだけで全ホバーを止めると、以降どの単語も引けなくなる
+function isPointerInSelection(x, y) {
   const sel = window.getSelection();
-  if (sel && sel.toString().trim()) {
+  if (!sel || sel.isCollapsed || !sel.rangeCount || !sel.toString().trim()) return false;
+  for (const rect of sel.getRangeAt(0).getClientRects()) {
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return true;
+  }
+  return false;
+}
+
+function clearHoverState(reason) {
+  const hadWord = lastHoveredWord;
+  const hadTimer = !!hoverTimer;
+  lastHoveredWord = null;
+  hoveredRange = null;
+  hoveredContext = null;
+  if (hoverTimer) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
+  if (hadWord || hadTimer) trace("hover-clear", { reason, word: hadWord, pending: hadTimer });
+}
+
+// ポップアップが実際に見える位置に出たか(画面外・他要素の下に隠れていないか)を記録する
+function tracePopupShown(word, rawWord, idiom, anchorRect) {
+  requestAnimationFrame(() => {
+    if (!popupElement) return;
+    const rect = popupElement.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const top = document.elementFromPoint(x, y);
+    trace("popup-shown", {
+      word,
+      headword: idiom?.headword || word,
+      idiom: idiom?.query || null,
+      rect: [Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height)],
+      anchor: anchorRect
+        ? [Math.round(anchorRect.left), Math.round(anchorRect.top), Math.round(anchorRect.width), Math.round(anchorRect.height)]
+        : null,
+      onScreen:
+        rect.width > 0 && rect.height > 0 &&
+        rect.right > 0 && rect.bottom > 0 &&
+        rect.left < window.innerWidth && rect.top < window.innerHeight,
+      topElement: top ? `${top.nodeName}${top.id ? `#${top.id}` : ""}` : null,
+      covered: !!top && top !== popupElement && !popupElement.contains(top),
+      bodyTransform: getComputedStyle(document.body).transform,
+      frame: { top: window === window.top, href: location.href },
+    });
+  });
+}
+
+// タイマー発火後の本体。通信失敗(null)なら自動で引き直し、それでも駄目なら
+// lastHoveredWordを解除して次のmousemoveで再試行できるようにする
+async function showHoveredWord({ hovered, point, attempt }) {
+  if (hovered !== lastHoveredWord) {
+    trace("lookup-skip", { reason: "moved-away", word: hovered });
     return;
   }
 
-  const hit = getWordUnderCursor(event.clientX, event.clientY);
-  const hovered = hit?.word;
-  if (!hovered || !HOVER_WORD_PATTERN.test(hovered)) {
-    lastHoveredWord = null;
-    hoveredRange = null;
-    hoveredContext = null;
-    if (hoverTimer) {
-      clearTimeout(hoverTimer);
-      hoverTimer = null;
+  const word = hovered.toLowerCase();
+  if (currentWord === word) {
+    trace("lookup-skip", { reason: "current-word", word });
+    return;
+  }
+  const range = hoveredRange;
+  const context = hoveredContext;
+  const started = performance.now();
+  let shown = false;
+  let settled = 0;
+
+  const anchorFor = () =>
+    range ? range.getBoundingClientRect() : new DOMRect(point.x, point.y, 0, 0);
+
+  // 単語そのものとイディオム候補を同時に投げ、先に届いた方をすぐ表示する。
+  // イディオムは候補12件の一番遅い応答まで待つので初回は数秒かかることがあり、
+  // 全部揃うまで待つと単語の結果だけで済むケースまで遅くなる。
+  // イディオムが後から届いたら、そのときだけ差し替える
+  const render = (html, headword, idiom) => {
+    if (!html) return false;
+    // fetch中に別の単語へ移っていたら、その単語の結果を優先して捨てる
+    if (hovered !== lastHoveredWord) return false;
+    if (shown) {
+      // 差し替えはイディオムだけ。ユーザーがポップアップ内を操作していたら触らない
+      if (!idiom || popupLocked) return false;
+      // オートクローズ・mousedown・+追加などで閉じていたら開き直さない
+      if (!popupElement || currentWord !== word) return false;
     }
+    // fetch中にスクロールされている可能性があるので、表示直前に単語の位置を測り直す
+    const anchorRect = anchorFor();
+    // 第3引数(rawWord)はmark.jsが本文との文字列一致で<mark>位置を探すのに使うので、
+    // 本文に無い並びになりうるイディオムではなく、ホバーした単語のままにする
+    showPopup(html, headword, hovered, range, anchorRect);
+    // showPopupはcurrentWordに見出し語を入れるが、再ホバーの重複判定は
+    // ホバーした単語で行うので戻す
+    currentWord = word;
+    shown = true;
+    trace("lookup-shown", {
+      word,
+      attempt,
+      kind: idiom ? "idiom" : "word",
+      headword,
+      ms: Math.round(performance.now() - started),
+    });
+    tracePopupShown(word, hovered, idiom, anchorRect);
+    return true;
+  };
+
+  // 単語とイディオムの両方が決着してから、失敗時の再試行を判断する
+  const finish = () => {
+    settled += 1;
+    if (settled < 2) return;
+    if (shown) {
+      trace("lookup-done", { word, attempt, ms: Math.round(performance.now() - started) });
+      return;
+    }
+    // WeblioはMISSでもHTMLを返すので、htmlが無い=通信自体の失敗。
+    // 一度だけ自動で引き直し、それでも駄目なら同じ単語の上でも再試行できるよう解除する
+    trace("lookup-empty", { word, attempt, ms: Math.round(performance.now() - started) });
+    if (attempt < HOVER_RETRY_DELAYS.length) {
+      const delay = HOVER_RETRY_DELAYS[attempt];
+      trace("lookup-retry", { word, attempt, delay });
+      hoverTimer = setTimeout(() => {
+        hoverTimer = null;
+        showHoveredWord({ hovered, point, attempt: attempt + 1 });
+      }, delay);
+    } else {
+      lastHoveredWord = null;
+    }
+  };
+
+  const onError = (error) => {
+    trace("lookup-exception", { word, attempt, error: error?.message || String(error) });
+    console.error("[weblio] hover lookup error:", error?.message || error);
+    if (!shown) lastHoveredWord = null;
+  };
+
+  cached(word, () => fetchDictionaryHTML(word))
+    .then((html) => render(html, word, null))
+    .catch(onError)
+    .finally(finish);
+
+  (context ? lookupIdiom(context.text, context.start) : Promise.resolve(null))
+    .then((idiom) => render(idiom?.html, idiom?.headword, idiom || null))
+    .catch(onError)
+    .finally(finish);
+}
+
+// captureで拾う。ページ側がstopPropagationしていてもホバーが死なないようにする
+document.addEventListener("mousemove", (event) => {
+  const point = { x: event.clientX, y: event.clientY };
+
+  // 選択中の範囲の上ではホバー処理をしない(選択は別ハンドラで即時処理)。
+  // 範囲の外へ出たら通常どおり引けるよう、保留中のタイマーは必ず落とす
+  if (isPointerInSelection(point.x, point.y)) {
+    clearHoverState("selection");
     return;
   }
 
+  // ポップアップ自体の上では辞書HTML内の英単語を拾わない。
+  // 拾うと翻訳ボタンへ向かう途中で別の語を引き直してしまう
+  if (popupElement) {
+    const over = deepElementFromPoint(point.x, point.y);
+    if (over && isNodeInside(over, popupElement)) return;
+  }
+
+  const hit = getWordUnderCursor(point.x, point.y);
+  const hovered = hit?.word;
+  if (!hovered) {
+    // 空白や要素の上をなぞるたびに記録するとトレースが埋まるので、状態が変わった時だけ
+    if (lastHitKey !== hit?.reason) {
+      lastHitKey = hit?.reason;
+      trace("hover-miss", { ...hit });
+    }
+    clearHoverState("not-a-word");
+    return;
+  }
+  if (!HOVER_WORD_PATTERN.test(hovered)) {
+    const key = `pattern:${hovered}`;
+    if (lastHitKey !== key) {
+      lastHitKey = key;
+      trace("hover-reject", { reason: "pattern", word: hovered });
+    }
+    clearHoverState("pattern");
+    return;
+  }
+
+  lastHitKey = `word:${hovered}`;
   if (hovered === lastHoveredWord) {
     return;
   }
@@ -594,45 +1068,23 @@ document.addEventListener("mousemove", (event) => {
   lastHoveredWord = hovered;
   hoveredRange = hit.range;
   hoveredContext = { text: hit.text, start: hit.start };
+  trace("hover-hit", {
+    word: hovered,
+    node: hit.nodeTag,
+    inShadow: hit.inShadow,
+    fallback: hit.fallback || false,
+    textLen: hit.text.length,
+  });
   if (hoverTimer) {
     clearTimeout(hoverTimer);
   }
-  hoverTimer = setTimeout(async () => {
-    if (hovered !== lastHoveredWord) {
-      return;
-    }
-
-    const word = hovered.toLowerCase();
-    if (currentWord === word) {
-      return;
-    }
-    currentWord = word;
-    const range = hoveredRange;
-    const context = hoveredContext;
-
-    // 単語そのものとイディオム候補を同時に投げる。イディオムが当たればそちらを見せ、
-    // 外れたら単語の結果に落とすので、待ち時間は今までと変わらない
-    const [html, idiom] = await Promise.all([
-      cached(word, () => fetchDictionaryHTML(word)),
-      context ? lookupIdiom(context.text, context.start) : null,
-    ]);
-    if (idiom || html) {
-      // fetch中にスクロールされている可能性があるので、表示直前に単語の位置を測り直す
-      const anchorRect = range
-        ? range.getBoundingClientRect()
-        : new DOMRect(event.clientX, event.clientY, 0, 0);
-      // 第3引数(rawWord)はmark.jsが本文との文字列一致で<mark>位置を探すのに使うので、
-      // 本文に無い並びになりうるイディオムではなく、ホバーした単語のままにする
-      showPopup(idiom ? idiom.html : html, idiom ? idiom.headword : word, hovered, range, anchorRect);
-      // showPopupはcurrentWordに見出し語を入れるが、再ホバーの重複fetch判定は
-      // ホバーした単語で行うので戻す
-      currentWord = word;
-    } else {
-      // 取得失敗のままcurrentWordを握ると、その単語が二度と引けなくなる
-      currentWord = null;
-    }
-  }, 300);
-});
+  trace("timer-armed", { word: hovered, delay: HOVER_DELAY_MS });
+  hoverTimer = setTimeout(() => {
+    hoverTimer = null;
+    trace("timer-fired", { word: hovered });
+    showHoveredWord({ hovered, point, attempt: 0 });
+  }, HOVER_DELAY_MS);
+}, true);
 
 // 句動詞・熟語(take off など)や記号混じり(don't worry, be happy)も引けるようにする。
 // 記号込みだとWeblioは「英和・和英辞典で一致する英語は見つかりませんでした。」を返すが、
@@ -701,10 +1153,17 @@ async function lookupSelection() {
 
 document.addEventListener("mousedown", (event) => {
   if (popupElement && !popupElement.contains(event.target)) {
-    closePopup();
+    // ユーザーの意思で閉じたのでホバー状態も解除する。残すと、同じ単語から
+    // カーソルを動かさない限り二度と表示できなくなる
+    closePopup({ releaseHover: true });
   }
-});
+}, true);
 
+// 入れ子のスクロールコンテナでも確実に閉じるためcaptureで拾う(scrollはbubbleしない)
 document.addEventListener("scroll", () => {
   closePopup({ releaseHover: true });
-});
+}, true);
+
+// ページ環境を最初に1件残す。iframe内か・bodyにtransformが掛かっていないか等、
+// サイト固有の失敗を後から切り分けるのに使う
+trace("env", traceEnv());

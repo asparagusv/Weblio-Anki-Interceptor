@@ -4,7 +4,9 @@
   "description": "Weblioのポップアップ辞書chrome拡張機能をインストールしてください https://chrome.google.com/webstore/detail/weblio%E3%83%9D%E3%83%83%E3%83%97%E3%82%A2%E3%83%83%E3%83%97%E8%8B%B1%E5%92%8C%E8%BE%9E%E5%85%B8/oingodpdjohhkelnginmkagmkbplgema?hl=ja",
   "main": "add-example.js",
   "scripts": {
-    "test": "sh test/run.sh"
+    "test": "sh test/run.sh",
+    "test:e2e": "node test/e2e/run.mjs",
+    "test:e2e:live": "node test/e2e/live.mjs"
   },
   "repository": {
     "type": "git",
@@ -24,6 +26,7 @@
     "@babel/core": "^7.21.0",
     "@babel/preset-env": "^7.20.2",
     "babel-loader": "^9.1.2",
+    "puppeteer-core": "^25.15.0",
     "webpack": "^5.76.1",
     "webpack-cli": "^5.0.1"
   }

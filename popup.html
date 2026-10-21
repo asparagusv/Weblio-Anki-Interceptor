@@ -2,29 +2,54 @@
 <html>
   <head>
     <style>
-      body {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 100vh;
-        margin: 0;
-      }
+    body {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      gap: 12px;
+    }
     
-      form {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        width: 300px; /* フォームの幅を調整してください */
-        padding: 20px;
-        border: 1px solid #ccc;
-        border-radius: 5px;
-        background-color: #f9f9f9;
-      }
+    form {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 300px; /* フォームの幅を調整してください */
+      padding: 1px 1px 10px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      background-color: #f9f9f9;
+    }
+
+    #diagnostics {
+      width: 300px;
+    }
+
+    #diagnostics .row {
+      display: flex;
+      gap: 6px;
+    }
+
+    #trace-output {
+      box-sizing: border-box;
+      width: 100%;
+      max-height: 220px;
+      overflow: auto;
+      margin: 6px 0 0;
+      padding: 6px;
+      border: 1px solid #ddd;
+      background: #fff;
+      font-size: 10px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
     
-      label, input, button {
-        margin-bottom: 10px;
-      }
-    </style>
+    label, input, button {
+      margin-bottom: 10px;
+    }
+  </style>
   </head>
   <body>
     <form>
@@ -33,6 +58,13 @@
       <button id="submit-button">Submit</button>
     </form>
     <div id="message-box"></div>
+    <section id="diagnostics">
+      <div class="row">
+        <button type="button" id="trace-load">ホバー診断を表示</button>
+        <button type="button" id="trace-copy" disabled>コピー</button>
+      </div>
+      <pre id="trace-output"></pre>
+    </section>
+    <script type="text/javascript" src="popup.js"></script>
   </body>
-  <script type="text/javascript" src="popup.js"></script>
 </html>

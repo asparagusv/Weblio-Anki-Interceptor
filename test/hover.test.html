@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>ホバー表示の回帰テスト (150ms / 失敗後の再試行 / mousedown / 選択の残り)</title>
+
+<!-- ホバーで出ないケースを実ブラウザで再現する。
+     ・通信が一度失敗した単語が二度と引けなくなる
+     ・拡張の再読み込み後などに sendMessage が throw して以降ずっと出ない
+     ・ポップアップを閉じたあと、同じ単語からカーソルを動かさないと出ない
+     ・ページの別の場所に選択が残っているだけでホバー全体が無効になる -->
+
+<div style="font: 16px/2 monospace; padding: 8px">
+  <p id="t">apple banana cherry durian accuracy.</p>
+  <p id="other">選択中</p>
+</div>
+
+<pre id="out"></pre>
+
+<script>
+  const fetchLog = [];
+  let bananaFails = 0;
+  // イディオム候補の応答を遅らせて、単語→イディオムの差し替えを再現する
+  let idiomHeadword = null;
+  let idiomDelayMs = 0;
+  const HIT = (head) =>
+    '<div id="baseMcr"><div id="eBodyMcr"><div class="eBarSml">' +
+    '<a class="barL title">' + head + '</a><p class="barR dctCr">(研究社)</p>' +
+    '</div><div class="contentMcr">意味</div></div></div>';
+
+  // chrome.runtime.sendMessage をスタブ。url の q= から引く。失敗時は本物と同じく
+  // 同期的に throw させる(拡張再読み込み後の "Extension context invalidated." 相当)
+  window.chrome = {
+    runtime: {
+      onMessage: { addListener() {} },
+      sendMessage(message, callback) {
+        if (message.type !== "fetchWeblio") {
+          if (callback) callback({ ok: false });
+          return;
+        }
+        const q = new URL(message.url).searchParams.get("q");
+        fetchLog.push(q);
+        if (q.includes("banana") && bananaFails > 0) {
+          bananaFails -= 1;
+          throw new Error("Extension context invalidated.");
+        }
+        const text =
+          q === idiomHeadword || ["apple", "banana", "cherry", "durian", "accuracy"].includes(q)
+            ? HIT(q)
+            : null;
+        const respond = () => {
+          if (callback) callback({ ok: !!text, text });
+        };
+        if (idiomHeadword && q === idiomHeadword && idiomDelayMs) {
+          setTimeout(respond, idiomDelayMs);
+        } else {
+          respond();
+        }
+      },
+    },
+  };
+  window.addEventListener("unhandledrejection", (e) => e.preventDefault());
+</script>
+<script src="../mark.js"></script>
+<script src="../idiom-candidates.js"></script>
+<script src="../dictionary-popup.js"></script>
+<script>
+  const results = [];
+  function check(name, pass, detail) {
+    results.push((pass ? "PASS" : "FAIL") + " " + name + (pass ? "" : "\n     " + detail));
+  }
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const popup = () => document.getElementById("weblio-dictionary-popup");
+
+  function pointFor(word) {
+    const root = document.getElementById("t");
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const i = node.data.indexOf(word);
+      if (i === -1) continue;
+      const range = document.createRange();
+      range.setStart(node, i);
+      range.setEnd(node, i + word.length);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+    throw new Error("単語が見つからない: " + word);
+  }
+
+  function move(x, y) {
+    document.body.dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true, clientX: x, clientY: y })
+    );
+  }
+
+  function mousedown(x, y) {
+    document.body.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, clientX: x, clientY: y })
+    );
+  }
+
+  async function hover(word) {
+    const p = pointFor(word);
+    move(p.x, p.y);
+    return p;
+  }
+
+  async function resetHover() {
+    move(2, 2);
+    closePopup({ releaseHover: true });
+    if (hoverTimer) {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+    }
+    currentWord = null;
+    lastHoveredWord = null;
+    hoveredRange = null;
+    hoveredContext = null;
+    window.getSelection().removeAllRanges();
+    await sleep(20);
+  }
+
+  (async () => {
+    // 1. 150ms 待ってから出る
+    await hover("apple");
+    await sleep(100);
+    check("100ms ではまだ出ない", !popup(), "早すぎる");
+    await sleep(100);
+    check("150ms 後に出る", !!popup(), "出なかった");
+    await resetHover();
+
+    // 1b. 文末のピリオドを単語に含めない(accuracy. で拒否されない)
+    await hover("accuracy");
+    await sleep(800);
+    check("文末ピリオド付きの単語でも出る", !!popup(), "出なかった");
+    check("ピリオドを除いた単語で引く", fetchLog.includes("accuracy"),
+      JSON.stringify(fetchLog.slice(-3)));
+    check("ピリオド付きの単語は引かない", !fetchLog.includes("accuracy."),
+      JSON.stringify(fetchLog.slice(-3)));
+    await resetHover();
+
+    // 1c. イディオムの応答が遅くても、先に単語の結果を出して後から差し替える
+    const title = () => popup()?.shadowRoot?.querySelector(".barL.title")?.textContent || null;
+    idiomHeadword = "apple banana";
+    idiomDelayMs = 500;
+    await hover("apple");
+    await sleep(500);
+    check("イディオム待ちの間は単語の結果を先に出す", title() === "apple", String(title()));
+    await sleep(600);
+    check("後から届いたイディオムに差し替わる", title() === "apple banana", String(title()));
+    idiomHeadword = null;
+    idiomDelayMs = 0;
+    // 次のテストの文脈(apple banana …)に、いま仕込んだヒットが残らないようにする
+    idiomCache.clear();
+    await resetHover();
+
+    // 2. 通信が失敗した単語でも、カーソルを外して戻せば引き直せる
+    bananaFails = 10;
+    await hover("banana");
+    await sleep(800);
+    check("失敗時はポップアップが出ない", !popup(), "出てしまった");
+    move(2, 2);
+    await sleep(50);
+    bananaFails = 0;
+    await hover("banana");
+    await sleep(800);
+    check("失敗後も再ホバーで引き直せる", !!popup(), "二度と出なかった");
+    await resetHover();
+
+    // 3. ポップアップを閉じても、同じ単語からカーソルを動かさず再表示できる
+    const cherry = await hover("cherry");
+    await sleep(800);
+    check("cherry が出る", !!popup(), "出なかった");
+    mousedown(cherry.x, cherry.y);
+    check("mousedown で閉じる", !popup(), "閉じなかった");
+    move(cherry.x, cherry.y);
+    await sleep(800);
+    check("同じ単語に留まったまま再表示できる", !!popup(), "再表示されなかった");
+    await resetHover();
+
+    // 4. 別の場所に選択が残っていても、ホバーは効く
+    const other = document.getElementById("other");
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(other);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    await sleep(300);
+    await hover("durian");
+    await sleep(800);
+    check("選択が残っていてもホバーできる", !!popup(), "出なかった");
+
+    const failed = results.filter((r) => r.startsWith("FAIL")).length;
+    results.push("");
+    results.push(failed === 0 ? "ALL PASS" : failed + " FAILED");
+    document.getElementById("out").textContent = results.join("\n");
+  })();
+</script>

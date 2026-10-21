@@ -1,0 +1,9 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>transformed body</title>
+<style>
+  /* transformされた要素はposition:fixedの包含ブロックになる。
+     bodyをずらして、popupがbody基準で配置されると位置がずれることを再現する */
+  body { font: 20px/2 monospace; margin: 80px; transform: translateZ(0); }
+</style>
+<p id="target">transform apple word</p>

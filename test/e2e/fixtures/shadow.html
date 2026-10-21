@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>shadow DOM</title>
+<div id="host"></div>
+<script>
+  // open shadow root。document.caretRangeFromPoint はここを貫通しない
+  const root = document.getElementById("host").attachShadow({ mode: "open" });
+  root.innerHTML =
+    '<p id="target" style="font:20px/2 monospace;margin:20px">shadow apple word</p>';
+</script>

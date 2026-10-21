@@ -64,10 +64,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // dictionary-popup.js のポップアップHTML取得はcontent script側からだとCORSにかかるためbackground側で代行する
   if (request && request.type === "fetchWeblio") {
-    fetch(request.url)
-      .then((res) => res.text())
-      .then((text) => sendResponse({ ok: true, text }))
-      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+    // 応答が返らないとPromise.allが永久に待ち、ポップアップが二度と出なくなる。
+    // 打ち切ってnull扱いにし、content script側の自動再試行へ回す
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    fetch(request.url, { signal: controller.signal })
+      .then(async (res) => {
+        // HTTPエラーを成功扱いにすると、429/5xxの本文を「辞書に無い」と誤認して
+        // キャッシュしてしまう。statusを返して呼び出し側で失敗として扱わせる
+        if (!res.ok) {
+          sendResponse({ ok: false, status: res.status, error: `HTTP ${res.status}` });
+          return;
+        }
+        sendResponse({ ok: true, status: res.status, text: await res.text() });
+      })
+      .catch((error) =>
+        sendResponse({ ok: false, error: error?.name === "AbortError" ? "timeout" : String(error) })
+      )
+      .finally(() => clearTimeout(timer));
     return true;
   }
 

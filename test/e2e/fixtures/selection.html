@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>leftover selection</title>
+<style>body { font: 20px/2 monospace; margin: 20px; }</style>
+<p id="other">選択中</p>
+<p id="target">selection apple word</p>
+<script>
+  // 別の場所に選択が残っている状態
+  const range = document.createRange();
+  range.selectNodeContents(document.getElementById("other"));
+  const sel = getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+</script>

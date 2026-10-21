@@ -13,7 +13,7 @@ fi
 status=0
 for f in *.test.html; do
   echo "--- $f"
-  "$CHROME" --headless --disable-gpu --no-sandbox --virtual-time-budget=2000 \
+  "$CHROME" --headless --disable-gpu --no-sandbox --virtual-time-budget=15000 \
     --dump-dom "file://$PWD/$f" 2>/dev/null | python3 -c "
 import sys, re, html
 d = sys.stdin.read()

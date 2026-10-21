@@ -7,3 +7,6 @@ translate-secrets.js
 .DS_Store
 .claude/
 .codex/
+
+# E2Eの失敗スクリーンショット/トレース
+test/e2e/artifacts/

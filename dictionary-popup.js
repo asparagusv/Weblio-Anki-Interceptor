@@ -217,6 +217,27 @@ function fallbackRootsFor(range, clientX, clientY) {
   return roots;
 }
 
+// caretRangeFromPoint は語の外(行の左余白や段落の上の余白)でも「最寄りの文字位置」を
+// 返す。そのまま単語を切り出すと、先頭語の左横にポインタを置いただけでも先頭語が
+// ホバー扱いになるので、ポインタが実際に単語の矩形に乗っているかを確認する
+const WORD_POINT_SLOP = 2;
+
+function isPointOnWord(node, start, end, clientX, clientY) {
+  if (!node) return false;
+  const range = document.createRange();
+  range.setStart(node, start);
+  range.setEnd(node, end);
+  for (const rect of range.getClientRects()) {
+    if (
+      clientX >= rect.left - WORD_POINT_SLOP && clientX <= rect.right + WORD_POINT_SLOP &&
+      clientY >= rect.top - WORD_POINT_SLOP && clientY <= rect.bottom + WORD_POINT_SLOP
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // マウスポインターの位置から英単語とそのRangeを抽出。
 // 失敗時も reason を返す(なぜホバーが反応しないかをトレースに出すため)
 function getWordUnderCursor(clientX, clientY) {
@@ -261,6 +282,9 @@ function getWordUnderCursor(clientX, clientY) {
     word = word.slice(leadingPunct).replace(/[._-]+$/, "");
     if (!word) return { reason: "empty-word" };
     const wordStart = startIndex + leadingPunct;
+    if (!isPointOnWord(node, wordStart, wordStart + word.length, clientX, clientY)) {
+      return { reason: "not-on-word", offset };
+    }
 
     // text/start はイディオム候補を組むための周辺文脈。テキストノード1つぶんだけだと
     // <b>keep</b> stress at bay のようにインライン要素で分断された文や、

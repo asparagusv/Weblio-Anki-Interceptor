@@ -79,6 +79,8 @@ async function hoverCase({
   frameSelector = null,
   mode = "ok",
   expectPopup = true,
+  popupWait = null,
+  at = null,
   setup = () => {},
 }) {
   server.mock.reset(word);
@@ -111,11 +113,11 @@ async function hoverCase({
     }, frameSelector);
   }
 
-  const point = await wordPoint(scope, word, { shadowHost });
+  const point = at ? await at(scope) : await wordPoint(scope, word, { shadowHost });
   await page.mouse.move(5, 5);
   await page.mouse.move(offset.x + point.x, offset.y + point.y, { steps: 4 });
 
-  const shown = await waitForPopup(scope, mode === "ok" ? 4000 : 6000);
+  const shown = await waitForPopup(scope, popupWait ?? (mode === "ok" ? 4000 : 6000));
   await sleep(200);
   const trace = await readTrace(scope);
 
@@ -149,10 +151,33 @@ async function hoverCase({
     !!r?.event?.onScreen && !r?.event?.covered, JSON.stringify(r?.event || null));
 }
 
-// 2. open shadow DOM
+// 2. 先頭語の左横(行の余白)では反応しない。caretRangeFromPoint は語の外でも
+// 最寄りの文字位置を返すため、余白に置いただけで先頭語が引かれていた
+{
+  const r = await hoverCase({
+    name: "余白: 先頭語の左横では出ない",
+    fixture: "basic.html",
+    word: "The",
+    expectPopup: false,
+    popupWait: 1200,
+    at: (scope) => scope.evaluate(() => {
+      const p = document.getElementById("target");
+      const range = document.createRange();
+      range.setStart(p.firstChild, 0);
+      range.setEnd(p.firstChild, 3);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.left - 6, y: rect.top + rect.height / 2 };
+    }),
+  });
+  check("余白: not-on-word として弾かれる",
+    (r?.trace || []).some((e) => e.stage === "hover-miss" && e.reason === "not-on-word"),
+    summarizeTrace(r?.trace));
+}
+
+// 3. open shadow DOM
 await hoverCase({ name: "shadow DOM: ホバーで出る", fixture: "shadow.html", word: "shadow", shadowHost: "host" });
 
-// 3. transformされたbody
+// 4. transformされたbody
 {
   const r = await hoverCase({
     name: "transform: ホバーで出る", fixture: "transform.html", word: "transform",
@@ -160,7 +185,7 @@ await hoverCase({ name: "shadow DOM: ホバーで出る", fixture: "shadow.html"
   check("transform: popupが単語の近くに配置される", isAdjacentToAnchor(r?.event), JSON.stringify(r?.event || null));
 }
 
-// 4. モーダルダイアログ(top layer)
+// 5. モーダルダイアログ(top layer)
 {
   const r = await hoverCase({ name: "dialog: ホバーで出る", fixture: "dialog.html", word: "dialog" });
   check("dialog: popupがtop layerより手前に見えている",
@@ -176,16 +201,16 @@ await hoverCase({ name: "shadow DOM: ホバーで出る", fixture: "shadow.html"
     bottomHit === "weblio-dictionary-popup", `hit=${bottomHit}`);
 }
 
-// 5. 選択が別の場所に残っている
+// 6. 選択が別の場所に残っている
 await hoverCase({ name: "選択残り: ホバーで出る", fixture: "selection.html", word: "selection" });
 
-// 6. contenteditable
+// 7. contenteditable
 await hoverCase({ name: "contenteditable: ホバーで出る", fixture: "contenteditable.html", word: "editable" });
 
-// 7. user-select:none
+// 8. user-select:none
 await hoverCase({ name: "user-select:none: ホバーで出る", fixture: "user-select.html", word: "unselectable" });
 
-// 8. iframe
+// 9. iframe
 await hoverCase({
   name: "iframe: ホバーで出る",
   fixture: "frame.html",
@@ -193,7 +218,7 @@ await hoverCase({
   word: "frame",
 });
 
-// 9. 通信が全滅 → 自動再試行で復帰する
+// 10. 通信が全滅 → 自動再試行で復帰する
 {
   const r = await hoverCase({
     name: "通信失敗→自動再試行で出る",
@@ -209,7 +234,7 @@ await hoverCase({
     `mock=${r?.mock}\n     ${summarizeTrace(r?.trace)}`);
 }
 
-// 10. HTTP 429 → 自動再試行で復帰する
+// 11. HTTP 429 → 自動再試行で復帰する
 {
   const r = await hoverCase({
     name: "HTTP429→自動再試行で出る",
@@ -221,7 +246,7 @@ await hoverCase({
   check("HTTP429→再試行: lookup-retry が記録される", retried || !r?.shown, summarizeTrace(r?.trace));
 }
 
-// 11. イディオム候補50件のうち1件が落ちても単語の結果で表示する
+// 12. イディオム候補50件のうち1件が落ちても単語の結果で表示する
 {
   const r = await hoverCase({
     name: "候補1件失敗でも出る",

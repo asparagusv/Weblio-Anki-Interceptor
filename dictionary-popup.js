@@ -794,7 +794,7 @@ function showNotification(message) {
 const HOVER_WORD_PATTERN = /^[a-zA-Z]+(-[a-zA-Z]+)*$/;
 
 // ホバーしてから表示するまでの待ち時間
-const HOVER_DELAY_MS = 150;
+const HOVER_DELAY_MS = 300;
 // 通信失敗時の自動再試行(service workerのコールドスタート対策)
 const HOVER_RETRY_DELAYS = [350, 900];
 

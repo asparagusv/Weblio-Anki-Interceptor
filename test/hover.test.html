@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <meta charset="utf-8">
-<title>ホバー表示の回帰テスト (150ms / 失敗後の再試行 / mousedown / 選択の残り)</title>
+<title>ホバー表示の回帰テスト (300ms / 失敗後の再試行 / mousedown / 選択の残り)</title>
 
 <!-- ホバーで出ないケースを実ブラウザで再現する。
      ・通信が一度失敗した単語が二度と引けなくなる
@@ -121,12 +121,12 @@
   }
 
   (async () => {
-    // 1. 150ms 待ってから出る
+    // 1. 300ms 待ってから出る
     await hover("apple");
-    await sleep(100);
-    check("100ms ではまだ出ない", !popup(), "早すぎる");
-    await sleep(100);
-    check("150ms 後に出る", !!popup(), "出なかった");
+    await sleep(150);
+    check("150ms ではまだ出ない", !popup(), "早すぎる");
+    await sleep(200);
+    check("300ms 後に出る", !!popup(), "出なかった");
     await resetHover();
 
     // 1b. 文末のピリオドを単語に含めない(accuracy. で拒否されない)

@@ -59,174 +59,59 @@ function trace(stage, detail = {}) {
   return entry;
 }
 
-// 英数字かどうかを判定
-const isEnglishCharacter = (code) => {
-  return (
-    (code >= 48 && code <= 57) || // 0-9
-    (code >= 65 && code <= 90) || // A-Z
-    (code >= 97 && code <= 122) || // a-z
-    code === 45 || // -
-    code === 95 || // _
-    code === 46    // .
-  );
-};
-
-// 英単語の開始位置を検索
-const searchStartIndex = (text, index) => {
-  let i = index;
-  while (i >= 0) {
-    const code = text.charCodeAt(i);
-    if (!isEnglishCharacter(code)) {
-      return i + 1;
-    }
-    i -= 1;
+// ポインタ位置にある要素を、Shadow DOM の内側から手前→奥の順に返す。
+// document.elementsFromPoint は shadow root の中を列挙しないので、
+// 最前面の host の shadowRoot で引き直して内側を先に足す
+function elementsFromPointInRoot(root, clientX, clientY) {
+  if (typeof root.elementsFromPoint === "function") {
+    return root.elementsFromPoint(clientX, clientY);
   }
-  return 0;
-};
-
-// 英単語の終了位置を検索
-const searchEndIndex = (text, index) => {
-  let i = index + 1;
-  while (i < text.length) {
-    const code = text.charCodeAt(i);
-    if (!isEnglishCharacter(code)) {
-      return i;
-    }
-    i += 1;
+  // 古いブラウザ向け。最前面の要素から祖先を辿れば、ポインタ上の文字を含む
+  // 要素はすべて揃う
+  const elements = [];
+  let element = root.elementFromPoint?.(clientX, clientY);
+  while (element) {
+    elements.push(element);
+    element = element.parentElement;
   }
-  return text.length;
-};
-
-// open shadow root を再帰的に辿って最前面の要素を返す。document.elementFromPoint は
-// shadow root の中まで見てくれないので、ホスト要素から elementFromPoint を呼び直す
-function deepElementFromPoint(clientX, clientY) {
-  let el = document.elementFromPoint(clientX, clientY);
-  for (let depth = 0; el && el.shadowRoot && depth < 10; depth += 1) {
-    const inner = el.shadowRoot.elementFromPoint?.(clientX, clientY);
-    if (!inner || inner === el) break;
-    el = inner;
-  }
-  return el;
+  return elements;
 }
 
-// root(Document か ShadowRoot)からキャレット位置を取る。Chrome の
-// caretRangeFromPoint は Document にしか無いので、ShadowRoot では仕様側の
-// caretPositionFromPoint にフォールバックする
-function caretRangeFromRoot(root, clientX, clientY) {
-  if (root.caretRangeFromPoint) {
-    return root.caretRangeFromPoint(clientX, clientY);
-  }
-  if (root.caretPositionFromPoint) {
-    const pos = root.caretPositionFromPoint(clientX, clientY);
-    if (!pos) return null;
-    const r = document.createRange();
-    r.setStart(pos.offsetNode, pos.offset);
-    r.setEnd(pos.offsetNode, pos.offset);
-    return r;
-  }
-  return null;
-}
-
-// ポイント座標から Range を取得(クロスブラウザ)。open shadow root の中の
-// テキストも指せるよう、返ってきたノードの root が ShadowRoot ならその中で引き直す
-function getRangeFromPoint(clientX, clientY) {
+function elementsFromPointDeep(clientX, clientY) {
+  const layers = [];
   let root = document;
-  let range = null;
-  for (let depth = 0; depth < 10; depth += 1) {
-    const inner = caretRangeFromRoot(root, clientX, clientY);
-    if (!inner) return range;
-    range = inner;
-    const node = inner.startContainer;
-    const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-    const scope = el?.getRootNode?.();
-    if (!(scope instanceof ShadowRoot) || scope === root) return range;
-    root = scope;
+  for (let depth = 0; root && depth < 10; depth += 1) {
+    const list = elementsFromPointInRoot(root, clientX, clientY);
+    if (!list.length) break;
+    layers.push(list);
+    const top = list[0];
+    if (!top?.shadowRoot) break;
+    root = top.shadowRoot;
   }
-  return range;
-}
-
-// caretRangeFromPoint がテキストノードを返さない場合のフォールバック。
-// shadow root 内では Document.caretRangeFromPoint が外側の要素を返すことがあり、
-// 行の余白やinline要素の境界では element ノードになる。候補要素の中の
-// テキストノードごとに「ポインタがその行に乗っているか」を先に見て、
-// 乗っている行の単語だけをRangeで走査する(巨大コンテナでも全文字を舐めない)
-const FALLBACK_MAX_TEXT_NODES = 2000;
-const FALLBACK_WORD_PATTERN = /[0-9A-Za-z._-]+/g;
-
-function wordRangeInTextNode(node, clientX, clientY) {
-  const data = node.data;
-  FALLBACK_WORD_PATTERN.lastIndex = 0;
-  let match;
-  while ((match = FALLBACK_WORD_PATTERN.exec(data))) {
-    const range = document.createRange();
-    range.setStart(node, match.index);
-    range.setEnd(node, match.index + match[0].length);
-    for (const rect of range.getClientRects()) {
-      if (
-        clientX >= rect.left - 1 && clientX <= rect.right + 1 &&
-        clientY >= rect.top && clientY <= rect.bottom
-      ) {
-        return { range, node, offset: match.index };
-      }
+  const elements = [];
+  const seen = new Set();
+  // 内側(shadow root)の要素ほど後に積まれるので、逆順にすれば手前から列挙できる
+  for (const list of layers.reverse()) {
+    for (const element of list) {
+      if (seen.has(element)) continue;
+      seen.add(element);
+      elements.push(element);
     }
   }
-  return null;
+  return elements;
 }
 
-function findWordRangeAtPoint(clientX, clientY, roots) {
-  for (const root of roots) {
-    if (!root?.isConnected) continue;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let textNode;
-    let checked = 0;
-    while ((textNode = walker.nextNode()) && checked < FALLBACK_MAX_TEXT_NODES) {
-      checked += 1;
-      if (!textNode.data.trim()) continue;
-
-      // まずこのテキストノードの行矩形にポインタが入っているかを見る。
-      // 入っていない行の単語を1つずつRangeにするのは無駄なので飛ばす
-      const lineRange = document.createRange();
-      lineRange.selectNodeContents(textNode);
-      let onLine = false;
-      for (const rect of lineRange.getClientRects()) {
-        if (
-          clientY >= rect.top - 1 && clientY <= rect.bottom + 1 &&
-          clientX >= rect.left - 2 && clientX <= rect.right + 2
-        ) {
-          onLine = true;
-          break;
-        }
-      }
-      if (!onLine) continue;
-
-      const hit = wordRangeInTextNode(textNode, clientX, clientY);
-      if (hit) return hit;
-    }
-  }
-  return null;
+function deepElementFromPoint(clientX, clientY) {
+  return elementsFromPointDeep(clientX, clientY)[0] || null;
 }
 
-// フォールバックの探索対象。caretの要素と最前面の要素は、pointer-events:noneや
-// 行の余白のせいで親子が逆転することがあるため、小さい(=テキストが少ない)方を先にする
-function fallbackRootsFor(range, clientX, clientY) {
-  const node = range?.startContainer;
-  const caretEl = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
-  const deep = deepElementFromPoint(clientX, clientY);
-  const roots = [caretEl, deep].filter(Boolean);
-  roots.sort((a, b) => (a.textContent?.length || 0) - (b.textContent?.length || 0));
-  return roots;
-}
-
-// caretRangeFromPoint は語の外(行の左余白や段落の上の余白)でも「最寄りの文字位置」を
-// 返す。そのまま単語を切り出すと、先頭語の左横にポインタを置いただけでも先頭語が
-// ホバー扱いになるので、ポインタが実際に単語の矩形に乗っているかを確認する
+// ポインタが単語の矩形に乗っているかの許容幅。行の左余白や段落の上でも
+// 「最寄りの文字位置」を返してしまう API に頼らず、矩形で判定する
 const WORD_POINT_SLOP = 2;
+const POINT_TEXT_NODE_LIMIT = 2000;
+const WORD_PATTERN = /[0-9A-Za-z._-]+/g;
 
-function isPointOnWord(node, start, end, clientX, clientY) {
-  if (!node) return false;
-  const range = document.createRange();
-  range.setStart(node, start);
-  range.setEnd(node, end);
+function rangeHitsPoint(range, clientX, clientY) {
   for (const rect of range.getClientRects()) {
     if (
       clientX >= rect.left - WORD_POINT_SLOP && clientX <= rect.right + WORD_POINT_SLOP &&
@@ -238,53 +123,66 @@ function isPointOnWord(node, start, end, clientX, clientY) {
   return false;
 }
 
+function wordRangeInTextNode(node, clientX, clientY) {
+  WORD_PATTERN.lastIndex = 0;
+  let match;
+  while ((match = WORD_PATTERN.exec(node.data))) {
+    const range = document.createRange();
+    range.setStart(node, match.index);
+    range.setEnd(node, match.index + match[0].length);
+    if (rangeHitsPoint(range, clientX, clientY)) return { range, node };
+  }
+  return null;
+}
+
+// ポインタ位置の要素から単語を探す。テキストノードごとに、ポインタが乗っている
+// 行だけを単語単位で走査する(巨大なコンテナでも全文字を舐めない)
+function findWordAtPoint(clientX, clientY) {
+  const seenNodes = new Set();
+  let checked = 0;
+  for (const root of elementsFromPointDeep(clientX, clientY)) {
+    if (!root.isConnected) continue;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let textNode;
+    while ((textNode = walker.nextNode())) {
+      if (seenNodes.has(textNode)) continue;
+      seenNodes.add(textNode);
+      if (checked >= POINT_TEXT_NODE_LIMIT) return null;
+      checked += 1;
+      if (!textNode.data.trim()) continue;
+
+      const lineRange = document.createRange();
+      lineRange.selectNodeContents(textNode);
+      if (!rangeHitsPoint(lineRange, clientX, clientY)) continue;
+
+      const hit = wordRangeInTextNode(textNode, clientX, clientY);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 // マウスポインターの位置から英単語とそのRangeを抽出。
 // 失敗時も reason を返す(なぜホバーが反応しないかをトレースに出すため)
 function getWordUnderCursor(clientX, clientY) {
   try {
-    let range = getRangeFromPoint(clientX, clientY);
-    let node = range?.startContainer;
-    let offset = range?.startOffset;
-    let usedFallback = false;
+    const hit = findWordAtPoint(clientX, clientY);
+    if (!hit) return { reason: "no-word" };
 
-    if (!range || node?.nodeType !== Node.TEXT_NODE) {
-      const fallback = findWordRangeAtPoint(clientX, clientY, fallbackRootsFor(range, clientX, clientY));
-      if (!fallback) {
-        if (!range) return { reason: "no-range" };
-        return {
-          reason: "not-text",
-          nodeType: node?.nodeType,
-          tag: node?.nodeName,
-          element: deepElementFromPoint(clientX, clientY)?.nodeName,
-        };
-      }
-      range = fallback.range;
-      node = fallback.node;
-      offset = fallback.offset;
-      usedFallback = true;
-    }
-
-    const raw = node.textContent || "";
-    if (!raw) return { reason: "empty-node" };
-
-    const code = raw.charCodeAt(offset);
-    if (!isEnglishCharacter(code)) {
-      return { reason: "non-english", char: raw[offset], offset };
-    }
-
-    const startIndex = searchStartIndex(raw, offset);
-    const endIndex = searchEndIndex(raw, offset);
-    let word = raw.substring(startIndex, endIndex).trim();
-    // isEnglishCharacter は小数点・アンダースコア・ハイフンも単語の一部として扱うため、
+    const { node } = hit;
+    const raw = node.data || "";
+    const matched = raw.slice(hit.range.startOffset, hit.range.endOffset);
+    // 単語パターンは小数点・アンダースコア・ハイフンも含むため、
     // "accuracy." のように文末のピリオドまで入ってくる。前後の記号だけ落とし、
     // well-known / 3.14 のような語中の記号は残す
-    const leadingPunct = (word.match(/^[._-]+/) || [""])[0].length;
-    word = word.slice(leadingPunct).replace(/[._-]+$/, "");
+    const leadingPunct = (matched.match(/^[._-]+/) || [""])[0].length;
+    const word = matched.slice(leadingPunct).replace(/[._-]+$/, "");
     if (!word) return { reason: "empty-word" };
-    const wordStart = startIndex + leadingPunct;
-    if (!isPointOnWord(node, wordStart, wordStart + word.length, clientX, clientY)) {
-      return { reason: "not-on-word", offset };
-    }
+
+    const wordStart = hit.range.startOffset + leadingPunct;
+    const range = document.createRange();
+    range.setStart(node, wordStart);
+    range.setEnd(node, wordStart + word.length);
 
     // text/start はイディオム候補を組むための周辺文脈。テキストノード1つぶんだけだと
     // <b>keep</b> stress at bay のようにインライン要素で分断された文や、
@@ -308,7 +206,6 @@ function getWordUnderCursor(clientX, clientY) {
       start,
       nodeTag: node.parentElement?.nodeName,
       inShadow: node.getRootNode() instanceof ShadowRoot,
-      fallback: usedFallback,
     };
   } catch (error) {
     return { reason: "exception", error: error?.message || String(error) };
@@ -1096,7 +993,6 @@ document.addEventListener("mousemove", (event) => {
     word: hovered,
     node: hit.nodeTag,
     inShadow: hit.inShadow,
-    fallback: hit.fallback || false,
     textLen: hit.text.length,
   });
   if (hoverTimer) {

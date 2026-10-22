@@ -89,7 +89,7 @@ export async function startMockWeblio() {
     mode: "ok",
     word: "",
     hitWords: new Set(["quick", "brown", "fox", "jumps", "lazy", "dog", "apple",
-      "shadow", "transform", "dialog", "editable", "selection", "unselectable", "frame"]),
+      "shadow", "transform", "dialog", "editable", "selection", "unselectable", "frame", "none"]),
     failedOnce: new Set(),
     failedWord: false,
     failedCandidate: false,

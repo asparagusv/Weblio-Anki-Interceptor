@@ -270,8 +270,14 @@ await hoverCase({ name: "shadow DOM: ホバーで出る", fixture: "shadow.html"
     bottomHit === "weblio-dictionary-popup", `hit=${bottomHit}`);
 }
 
-// 11. 選択が別の場所に残っている
-await hoverCase({ name: "選択残り: ホバーで出る", fixture: "selection.html", word: "selection" });
+// 11. 選択中のテキストがある間はホバーで出ない
+await hoverCase({
+  name: "選択中: ホバーで出ない",
+  fixture: "selection.html",
+  word: "selection",
+  expectPopup: false,
+  popupWait: 1200,
+});
 
 // 11b. 複数行の選択を下から上へドラッグしたとき、カーソル(終端)の行のすぐ下に出す。
 // 選択全体の外接矩形を使うと最終行の下に出てしまい、カーソルから遠くなる

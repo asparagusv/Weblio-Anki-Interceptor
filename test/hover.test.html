@@ -1,12 +1,12 @@
 <!DOCTYPE html>
 <meta charset="utf-8">
-<title>ホバー表示の回帰テスト (300ms / 失敗後の再試行 / mousedown / 選択の残り)</title>
+<title>ホバー表示の回帰テスト (300ms / 失敗後の再試行 / mousedown / 選択中はホバー無効)</title>
 
 <!-- ホバーで出ないケースを実ブラウザで再現する。
      ・通信が一度失敗した単語が二度と引けなくなる
      ・拡張の再読み込み後などに sendMessage が throw して以降ずっと出ない
      ・ポップアップを閉じたあと、同じ単語からカーソルを動かさないと出ない
-     ・ページの別の場所に選択が残っているだけでホバー全体が無効になる -->
+     ・選択中のテキストがある間はホバーでポップアップが出ない -->
 
 <div style="font: 16px/2 monospace; padding: 8px">
   <p id="t">apple banana cherry durian accuracy.</p>
@@ -178,7 +178,7 @@
     check("同じ単語に留まったまま再表示できる", !!popup(), "再表示されなかった");
     await resetHover();
 
-    // 4. 別の場所に選択が残っていても、ホバーは効く
+    // 4. 選択中のテキストがある間は、ホバーしてもポップアップが出ない
     const other = document.getElementById("other");
     const sel = window.getSelection();
     const range = document.createRange();
@@ -188,7 +188,14 @@
     await sleep(300);
     await hover("durian");
     await sleep(800);
-    check("選択が残っていてもホバーできる", !!popup(), "出なかった");
+    check("選択中はホバーできない", !popup(), "出てしまった");
+
+    // 選択を解除すれば、同じ場所のホバーで引ける
+    sel.removeAllRanges();
+    await sleep(50);
+    await hover("durian");
+    await sleep(800);
+    check("選択解除後はホバーできる", !!popup(), "出なかった");
 
     const failed = results.filter((r) => r.startsWith("FAIL")).length;
     results.push("");

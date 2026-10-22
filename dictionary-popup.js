@@ -798,15 +798,11 @@ const HOVER_DELAY_MS = 300;
 // 通信失敗時の自動再試行(service workerのコールドスタート対策)
 const HOVER_RETRY_DELAYS = [350, 900];
 
-// 選択範囲の上にポインタがあるときだけホバーを止める。選択がページの別の場所に
-// 残っているだけで全ホバーを止めると、以降どの単語も引けなくなる
-function isPointerInSelection(x, y) {
+// 選択中のテキストがある間はホバーで引かない。選択した語のポップアップと
+// ホバーのポップアップが重なったり入れ替わったりするのを防ぐ
+function hasSelection() {
   const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || !sel.rangeCount || !sel.toString().trim()) return false;
-  for (const rect of sel.getRangeAt(0).getClientRects()) {
-    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return true;
-  }
-  return false;
+  return !!(sel && !sel.isCollapsed && sel.rangeCount && sel.toString().trim());
 }
 
 function clearHoverState(reason) {
@@ -950,9 +946,9 @@ async function showHoveredWord({ hovered, point, attempt }) {
 document.addEventListener("mousemove", (event) => {
   const point = { x: event.clientX, y: event.clientY };
 
-  // 選択中の範囲の上ではホバー処理をしない(選択は別ハンドラで即時処理)。
-  // 範囲の外へ出たら通常どおり引けるよう、保留中のタイマーは必ず落とす
-  if (isPointerInSelection(point.x, point.y)) {
+  // 選択中のテキストがある間はホバー処理をしない(選択は別ハンドラで処理する)。
+  // 選択を解除したら通常どおり引けるよう、保留中のタイマーは必ず落とす
+  if (hasSelection()) {
     clearHoverState("selection");
     return;
   }

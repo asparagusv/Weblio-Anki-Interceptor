@@ -34,13 +34,13 @@ function popupShownEvent(trace) {
   return (trace || []).filter((e) => e.stage === "popup-shown").pop() || null;
 }
 
-// 「下に gap 8px」か「上に gap 8px」に置けているか。transform された body の
+// 「下に gap 0px」か「上に gap 8px」に置けているか。transform された body の
 // 影響で座標系がずれるとここが崩れる
 function isAdjacentToAnchor(event) {
   if (!event?.anchor || !event?.rect) return false;
   const [ax, ay, aw, ah] = event.anchor;
   const [, ry, , rh] = event.rect;
-  const below = Math.abs(ry - (ay + ah + 8));
+  const below = Math.abs(ry - (ay + ah));
   const above = Math.abs(ry + rh - (ay - 8));
   return Math.min(below, above) <= 3;
 }
@@ -272,6 +272,50 @@ await hoverCase({ name: "shadow DOM: ホバーで出る", fixture: "shadow.html"
 
 // 11. 選択が別の場所に残っている
 await hoverCase({ name: "選択残り: ホバーで出る", fixture: "selection.html", word: "selection" });
+
+// 11b. 複数行の選択を下から上へドラッグしたとき、カーソル(終端)の行のすぐ下に出す。
+// 選択全体の外接矩形を使うと最終行の下に出てしまい、カーソルから遠くなる
+{
+  await loadFixture("selection-multiline.html");
+  await waitForContentScript(page, 4000);
+  const points = await page.evaluate(() => {
+    const node = document.getElementById("target").firstChild;
+    const pointFor = (word) => {
+      const index = node.data.indexOf(word);
+      const range = document.createRange();
+      range.setStart(node, index);
+      range.setEnd(node, index + word.length);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.left + 2, y: rect.top + rect.height / 2 };
+    };
+    return { from: pointFor("lima"), to: pointFor("alpha") };
+  });
+  await page.mouse.move(points.from.x, points.from.y);
+  await page.mouse.down();
+  await page.mouse.move(points.to.x, points.to.y, { steps: 8 });
+  await page.mouse.up();
+
+  const shown = await waitForPopup(page, 4000);
+  check("複数行選択(下→上): ポップアップが出る", shown);
+  if (shown) {
+    const geom = await page.evaluate(() => {
+      const range = window.getSelection().getRangeAt(0);
+      const rects = [...range.getClientRects()].filter((r) => r.width > 0 || r.height > 0);
+      const popup = document.getElementById("weblio-dictionary-popup").getBoundingClientRect();
+      return {
+        lines: rects.length,
+        firstBottom: rects[0]?.bottom ?? null,
+        lastBottom: rects[rects.length - 1]?.bottom ?? null,
+        popupTop: popup.top,
+      };
+    });
+    check("複数行選択(下→上): 複数行にまたがっている", geom.lines >= 3, JSON.stringify(geom));
+    check("複数行選択(下→上): カーソル行のすぐ下に出る",
+      Math.abs(geom.popupTop - geom.firstBottom) <= 2, JSON.stringify(geom));
+    check("複数行選択(下→上): 最終行の下には出ない",
+      geom.popupTop < geom.lastBottom - 10, JSON.stringify(geom));
+  }
+}
 
 // 12. contenteditable
 await hoverCase({ name: "contenteditable: ホバーで出る", fixture: "contenteditable.html", word: "editable" });

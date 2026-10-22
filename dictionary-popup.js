@@ -1023,6 +1023,24 @@ const SELECTION_PATTERN = /^(?=[^a-zA-Z]*[a-zA-Z])[\x20-\x7e‘’“”–—�
 
 let selectionTimer = null;
 
+// 選択の終端(focus)が開始点(anchor)より前にあるか。下から上へドラッグした選択か
+function selectionFocusFirst(sel) {
+  if (!sel?.focusNode || !sel?.anchorNode) return false;
+  if (sel.focusNode === sel.anchorNode) return sel.focusOffset < sel.anchorOffset;
+  return !!(sel.anchorNode.compareDocumentPosition(sel.focusNode) &
+    Node.DOCUMENT_POSITION_PRECEDING);
+}
+
+// 複数行の選択では getBoundingClientRect() が選択全体の外接矩形になり、
+// 下から上へドラッグするとカーソル(終端)から遠い最終行の下を基準にしてしまう。
+// 終端のある行の矩形を返し、ポップアップをカーソルのすぐ下に出せるようにする
+function selectionAnchorRect(range, focusFirst) {
+  if (!range) return new DOMRect(0, 0, 0, 0);
+  const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 || r.height > 0);
+  if (rects.length <= 1) return range.getBoundingClientRect();
+  return focusFirst ? rects[0] : rects[rects.length - 1];
+}
+
 // 選択即時実行。ドラッグ中は1文字ごとにselectionchangeが飛ぶので、
 // 途中経過("take o"など)でfetchしないよう確定を待つ
 document.addEventListener("selectionchange", () => {
@@ -1045,6 +1063,8 @@ async function lookupSelection() {
   currentWord = word;
 
   const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+  // fetch中に選択が変わっても、取得したrangeと同じ向きで測れるよう先に控える
+  const focusFirst = selectionFocusFirst(sel);
 
   // 選んだ形のままでは見出しに無いことがある(get his act together はMISSで
   // get one's act together が見出し)。ホバーと同じ変形を並列で投げて、
@@ -1066,7 +1086,7 @@ async function lookupSelection() {
   }
   if (shown) {
     // fetch中にスクロールされている可能性があるので、表示直前に選択範囲の位置を測り直す
-    const anchorRect = range ? range.getBoundingClientRect() : new DOMRect(0, 0, 0, 0);
+    const anchorRect = selectionAnchorRect(range, focusFirst);
     // extractMarkedTextは本文との文字列一致で<mark>位置を探すので、正規化前の選択文字列を渡す
     showPopup(shown, headword, rawText, range, anchorRect);
   } else {

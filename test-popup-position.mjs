@@ -23,8 +23,8 @@ function run(anchor, popupH, popupW = 400) {
 
 const line = (top, h = 20) => ({ top, bottom: top + h, left: 100 });
 
-// 下に余裕あり → 行の下
-assert.strictEqual(run(line(100), 300).top, 128);
+// 下に余裕あり → 行の下(隙間なし)
+assert.strictEqual(run(line(100), 300).top, 120);
 // 下が足りず上に余裕あり → 行の上、下端が行の上に来る
 const above = run(line(600), 300);
 assert.strictEqual(above.top, 600 - 8 - 300);

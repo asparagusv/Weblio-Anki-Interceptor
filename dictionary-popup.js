@@ -396,11 +396,15 @@ async function fetchTranslation(text) {
 // ポップアップと単語の行の間に空けるマージン
 const POPUP_GAP = 8;
 
+// 単語の下に出すときは間を空けない。空けると、カーソルをポップアップへ動かす
+// 途中で隙間から下の行の文字に乗ってしまい、別の単語を引いてしまう
+const POPUP_ATTACH_GAP = 0;
+
 // 引いた単語の行(anchorRect)に被らないよう、行の下か上の空いている側に置く
 function positionPopup(el, content, anchorRect) {
   // 翻訳を足して置き直すとき、前回詰めた高さが残っていると計算がずれるのでリセットする
   content.style.maxHeight = "";
-  const spaceBelow = window.innerHeight - anchorRect.bottom - POPUP_GAP * 2;
+  const spaceBelow = window.innerHeight - anchorRect.bottom - POPUP_GAP - POPUP_ATTACH_GAP;
   const spaceAbove = anchorRect.top - POPUP_GAP * 2;
   const height = el.getBoundingClientRect().height;
 
@@ -416,7 +420,7 @@ function positionPopup(el, content, anchorRect) {
 
   const finalHeight = el.getBoundingClientRect().height;
   const top = below
-    ? anchorRect.bottom + POPUP_GAP
+    ? anchorRect.bottom + POPUP_ATTACH_GAP
     : Math.max(POPUP_GAP, anchorRect.top - POPUP_GAP - finalHeight);
 
   const width = el.getBoundingClientRect().width;

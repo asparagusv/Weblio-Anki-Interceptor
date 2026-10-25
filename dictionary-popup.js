@@ -686,11 +686,15 @@ function closePopup({ releaseHover = false } = {}) {
 
 // 単語をAnkiに追加し、rangeの周辺文章を例文として登録する
 function addWordToAnki(word, rawWord, range) {
+  const notification = showNotification("Adding to Anki...", "loading");
   chrome.runtime.sendMessage({ type: "addWordToAnki", word }, (response) => {
+    const error = chrome.runtime.lastError;
     if (response && response.success) {
-      showNotification(`Added "${word}" to Anki`);
+      updateNotification(notification, `Added "${word}" to Anki`, "success");
     } else if (response && response.duplicate) {
-      showNotification(`"${word}" already in your deck`);
+      updateNotification(notification, `"${word}" already in your deck`, "success");
+    } else {
+      updateNotification(notification, `Anki error: ${response?.error || error?.message || "unknown"}`, "error");
     }
 
     // extractMarkedText は mark.js で定義された関数(同じcontent scriptワールドを共有)
@@ -706,14 +710,16 @@ function addWordToAnki(word, rawWord, range) {
 function addTranslatedNoteToAnki(text, translation, range) {
   // 長文まるごと選択できるのでトーストに全部は載せない
   const label = text.length > 40 ? `${text.slice(0, 40)}…` : text;
+  const notification = showNotification("Adding to Anki...", "loading");
 
   chrome.runtime.sendMessage({ type: "addTranslatedNote", text, translation }, (response) => {
+    const error = chrome.runtime.lastError;
     if (response && response.success) {
-      showNotification(`Added "${label}" to Anki`);
+      updateNotification(notification, `Added "${label}" to Anki`, "success");
     } else if (response && response.duplicate) {
-      showNotification(`"${label}" already in your deck`);
+      updateNotification(notification, `"${label}" already in your deck`, "success");
     } else {
-      showNotification(`Anki error: ${response?.error || chrome.runtime.lastError?.message || "unknown"}`);
+      updateNotification(notification, `Anki error: ${response?.error || error?.message || "unknown"}`, "error");
     }
 
     const marked = extractMarkedText(text, range);
@@ -736,7 +742,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-function showNotification(message) {
+function showNotification(message, variant = "success") {
   const notification = document.createElement("div");
   notification.style.cssText = `
     position: fixed;
@@ -781,13 +787,28 @@ function showNotification(message) {
   viewport?.addEventListener("scroll", schedulePlace);
   window.addEventListener("resize", schedulePlace);
 
-  setTimeout(() => {
+  const cleanup = () => {
     viewport?.removeEventListener("resize", schedulePlace);
     viewport?.removeEventListener("scroll", schedulePlace);
     window.removeEventListener("resize", schedulePlace);
     cancelAnimationFrame(frame);
     notification.remove();
-  }, 3000);
+  };
+  if (variant !== "loading") setTimeout(cleanup, 3000);
+  return { notification, cleanup, place };
+}
+
+function updateNotification(handle, message, variant = "success") {
+  if (!handle?.notification?.isConnected) {
+    showNotification(message, variant);
+    return;
+  }
+  const { notification } = handle;
+  notification.textContent = message;
+  notification.style.background = "#4CAF50";
+  // 文言変更で幅が変わるので、新しい幅で右端に合わせ直す。
+  handle.place();
+  setTimeout(handle.cleanup, 3000);
 }
 
 // ホバーで拾う単語のゲート。rear-ended / well-known のようなハイフン複合語も許す

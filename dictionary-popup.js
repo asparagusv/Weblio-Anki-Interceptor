@@ -9,6 +9,10 @@ let currentWord = null;
 let popupLocked = false;
 let hoverTimer = null;
 let lastHoveredWord = null;
+// 完全停止判定用。前回と座標が同じイベントは「動き」でないのでタイマーを生かし、
+// 1pxでも動いていたら動きとみなしてタイマーを落とす
+let lastMouseX = 0;
+let lastMouseY = 0;
 let hoveredRange = null;
 // ホバーした単語を含むテキストと、その中での単語の開始位置。イディオム候補を組むのに使う
 let hoveredContext = null;
@@ -967,6 +971,17 @@ async function showHoveredWord({ hovered, point, attempt }) {
 document.addEventListener("mousemove", (event) => {
   const point = { x: event.clientX, y: event.clientY };
 
+  // マウスが動いたらタイマーを落とす。完全に停止してから300ms後にしか発火しない
+  const moved = point.x !== lastMouseX || point.y !== lastMouseY;
+  if (moved) {
+    lastMouseX = point.x;
+    lastMouseY = point.y;
+    if (hoverTimer) {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+    }
+  }
+
   // 選択中のテキストがある間はホバー処理をしない(選択は別ハンドラで処理する)。
   // 選択を解除したら通常どおり引けるよう、保留中のタイマーは必ず落とす
   if (hasSelection()) {
@@ -1003,7 +1018,16 @@ document.addEventListener("mousemove", (event) => {
   }
 
   lastHitKey = `word:${hovered}`;
+  // 同じ単語に居続けている間は状態とトレースを取り直さない。
+  // 動きでタイマーを落とした直後だけ静かに再装填する(=完全停止待ち)
   if (hovered === lastHoveredWord) {
+    if (hoverTimer || !moved) return;
+    trace("timer-armed", { word: hovered, delay: HOVER_DELAY_MS, rearm: true });
+    hoverTimer = setTimeout(() => {
+      hoverTimer = null;
+      trace("timer-fired", { word: hovered });
+      showHoveredWord({ hovered, point, attempt: 0 });
+    }, HOVER_DELAY_MS);
     return;
   }
 

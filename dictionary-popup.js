@@ -629,11 +629,22 @@ function showPopup(html, word, rawWord, range, anchorRect) {
         text-align: left;
         white-space: pre-wrap;
       }
+      /* 見出し等の<a>はJSでhrefを外して無効化する。色はWeblioのスタイルが
+         残るので、下線とポインタだけ消してただのテキストに見せる */
+      a:not([href]) {
+        text-decoration: none;
+        cursor: inherit;
+      }
     </style>
     <div class="weblio-popup-content">${html}</div>
   `;
 
   const content = shadow.querySelector(".weblio-popup-content");
+  // WeblioのHTMLは見出し(a.barL.title)などが<a>リンクで入ってくる。
+  // クリックでWeblioへ飛ぶのは不要なので、hrefを外してただのテキストにする
+  for (const link of content.querySelectorAll("a[href]")) {
+    link.removeAttribute("href");
+  }
   content.addEventListener("pointerdown", () => { popupLocked = true; }, { once: true });
 
   const addButton = shadow.querySelector(".wlaBtnTtlTng");

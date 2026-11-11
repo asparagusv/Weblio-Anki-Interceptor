@@ -216,13 +216,154 @@ function getWordUnderCursor(clientX, clientY) {
   }
 }
 
+// ===== 通信インジケーター =====
+// タイマーが発火してWeblioへの問い合わせが始まる瞬間から、カーソルの近くに
+// 返ってきた応答の数を小さく出す。ポップアップが出た時点で役目は終わりなので消す。
+// 狙いは待ち時間に「何も起きていない」ように見せないことなので、控えめな見た目にして、
+// キャッシュ命中で即ポップアップが出るときは一瞬も見せない(点滅の防止)
+
+// カーソルの右下にずらして置く。指している単語の文字に被らない程度の距離
+const INDICATOR_OFFSET_X = 14;
+const INDICATOR_OFFSET_Y = 18;
+// ポップアップが即出る場合に表示を跳ばす猶予。キャッシュ命中ならこれ以内に決着する
+const INDICATOR_SHOW_DELAY_MS = 80;
+
+let apiIndicatorEl = null;
+let apiIndicatorCountNode = null;
+let apiIndicatorShowTimer = null;
+// いま数えている照会の区切り。fetchWeblioUrlは呼び出し時点のセッションを覚えておき、
+// 応答が返ったときに同じセッションだけ数える。移動で前の単語の応答が後から返って
+// きても、次の単語のカウントに混ざらないようにする
+let apiIndicatorSession = null;
+
+function ensureApiIndicator() {
+  if (apiIndicatorEl?.isConnected) return;
+  apiIndicatorEl = document.createElement("div");
+  apiIndicatorEl.id = "weblio-api-indicator";
+  // ポップアップと同じくtop layerに出す。ページ側のz-indexやoverflowの影響を受けない
+  apiIndicatorEl.setAttribute("popover", "manual");
+  // ヒットテストから外す。pointer-events:noneの要素はelementsFromPointに含まれないので、
+  // インジケーターの数字がホバー対象の単語として拾われたり、ページのクリックを遮ったりしない
+  apiIndicatorEl.style.cssText = `
+    position: fixed;
+    inset: auto;
+    left: -9999px;
+    top: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+    z-index: 2147483647;
+  `;
+  // Shadow DOMで隔離する。@keyframesをlight DOMに出すとページ側の同名アニメーションと干渉しうる
+  const shadow = apiIndicatorEl.attachShadow({ mode: "open" });
+  shadow.innerHTML = `
+    <style>
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 8px 3px 7px;
+        border-radius: 999px;
+        background: rgba(32, 34, 38, 0.75);
+        color: #fff;
+        font-family: 'Helvetica Neue', Arial, sans-serif;
+        font-size: 11px;
+        line-height: 1;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+        animation: weblio-indicator-in 140ms ease-out;
+      }
+      .spin {
+        width: 9px;
+        height: 9px;
+        box-sizing: border-box;
+        border: 1.5px solid rgba(255, 255, 255, 0.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: weblio-indicator-spin 900ms linear infinite;
+      }
+      .num { min-width: 1ch; text-align: center; }
+      @keyframes weblio-indicator-spin { to { transform: rotate(360deg); } }
+      @keyframes weblio-indicator-in { from { opacity: 0; transform: translateY(2px); } }
+      @media (prefers-reduced-motion: reduce) {
+        .pill, .spin { animation: none; }
+      }
+    </style>
+    <div class="pill"><span class="spin" aria-hidden="true"></span><span class="num">0</span></div>
+  `;
+  apiIndicatorCountNode = shadow.querySelector(".num");
+  document.documentElement.appendChild(apiIndicatorEl);
+  try {
+    apiIndicatorEl.showPopover?.();
+  } catch {
+    // すでに開いている場合は無視
+  }
+}
+
+// ビューポートからはみ出すときは内側に詰める
+function placeApiIndicator(x, y) {
+  const width = apiIndicatorEl.offsetWidth || 48;
+  const height = apiIndicatorEl.offsetHeight || 19;
+  apiIndicatorEl.style.left = `${
+    Math.min(Math.max(6, x + INDICATOR_OFFSET_X), Math.max(6, window.innerWidth - width - 6))
+  }px`;
+  apiIndicatorEl.style.top = `${
+    Math.min(Math.max(6, y + INDICATOR_OFFSET_Y), Math.max(6, window.innerHeight - height - 6))
+  }px`;
+}
+
+// 照会の開始。新しい区切りで数え直すので0に戻す。表示は少し遅らせて、
+// キャッシュ命中で即決着するときは一瞬も見せない
+function startApiIndicator(x, y) {
+  const session = { returned: 0 };
+  apiIndicatorSession = session;
+  ensureApiIndicator();
+  if (apiIndicatorCountNode) apiIndicatorCountNode.textContent = "0";
+  clearTimeout(apiIndicatorShowTimer);
+  // すでに見えている(前の照会がまだ待っている/再試行)なら、遅らせず張り直す。
+  // 遅らせると古い位置に古い数字のまま一瞬残って見える
+  if (apiIndicatorEl && apiIndicatorEl.style.left !== "-9999px") {
+    placeApiIndicator(x, y);
+    return;
+  }
+  apiIndicatorShowTimer = setTimeout(() => {
+    apiIndicatorShowTimer = null;
+    // 遅らせている間にポップアップが出ていたら、そもそも見せる必要がなかった
+    if (apiIndicatorSession !== session || popupElement) return;
+    placeApiIndicator(x, y);
+  }, INDICATOR_SHOW_DELAY_MS);
+}
+
+function hideApiIndicator() {
+  apiIndicatorSession = null;
+  clearTimeout(apiIndicatorShowTimer);
+  apiIndicatorShowTimer = null;
+  if (apiIndicatorEl && apiIndicatorEl.style.left !== "-9999px") {
+    apiIndicatorEl.style.left = "-9999px";
+  }
+}
+
+// Weblioへの往復が1つ決着した(成功・失敗は問わない)。
+// 呼び出し時点のセッションが現役の間だけ数える
+function settleApiIndicator(session) {
+  if (!session || session !== apiIndicatorSession) return;
+  session.returned += 1;
+  if (apiIndicatorCountNode) apiIndicatorCountNode.textContent = String(session.returned);
+}
+
 // WeblioのHTMLを取得(CORSにかかるためbackground側に代行させる)
 async function fetchWeblioUrl(url) {
   const started = performance.now();
+  // 返りを数える相手は呼び出し時点のセッション。応答を待っている間に別の単語へ
+  // 移ってセッションが代わっていたら、その返りは今のカウントには載せない
+  const session = apiIndicatorSession;
   return new Promise((resolve) => {
     try {
       chrome.runtime.sendMessage({ type: "fetchWeblio", url }, (res) => {
         const ms = Math.round(performance.now() - started);
+        // 応答が返った。成功・失敗は問わず往復の決着として数える
+        settleApiIndicator(session);
         if (chrome.runtime.lastError) {
           trace("fetch-error", {
             url, ms, error: chrome.runtime.lastError.message,
@@ -245,6 +386,7 @@ async function fetchWeblioUrl(url) {
       // 拡張を再読み込み/更新すると、古いcontent scriptからのsendMessageは
       // "Extension context invalidated." で同期的にthrowする。握らないと
       // Promise.allごと落ちて、そのページでは二度とポップアップが出なくなる
+      settleApiIndicator(session);
       trace("fetch-error", {
         url, ms: Math.round(performance.now() - started), error: error?.message || String(error),
       });
@@ -679,6 +821,8 @@ function showPopup(html, word, rawWord, range, anchorRect) {
 // カーソルが単語に乗ったままでもmousemoveで再表示できるようにする
 function closePopup({ releaseHover = false } = {}) {
   stopAutoCloseTimer();
+  // ポップアップを出すときも閉じるときも、待機表示は並べて出さない
+  hideApiIndicator();
   if (popupElement) {
     try {
       popupElement.hidePopover?.();
@@ -847,6 +991,8 @@ function clearHoverState(reason) {
   lastHoveredWord = null;
   hoveredRange = null;
   hoveredContext = null;
+  // ここから先は飛んできた結果も捨てられるので、待機表示は出ていれば片付ける
+  hideApiIndicator();
   if (hoverTimer) {
     clearTimeout(hoverTimer);
     hoverTimer = null;
@@ -898,6 +1044,9 @@ async function showHoveredWord({ hovered, point, attempt }) {
   const range = hoveredRange;
   const context = hoveredContext;
   const started = performance.now();
+  // ここから通信が始まる。タイマー発火の瞬間にカーソルの近くへカウンタを出す
+  // (再試行のときは数え直しになる。取り直したぶんだけ全体が見える)
+  startApiIndicator(point.x, point.y);
   let shown = false;
   let settled = 0;
 
@@ -920,6 +1069,9 @@ async function showHoveredWord({ hovered, point, attempt }) {
     }
     // fetch中にスクロールされている可能性があるので、表示直前に単語の位置を測り直す
     const anchorRect = anchorFor();
+    // 結果が出たのでインジケーターは役目を終える。ポップアップより先に片付けて、
+    // カーソル付近に2つのUIが一瞬並ぶのを防ぐ
+    hideApiIndicator();
     // 第3引数(rawWord)はmark.jsが本文との文字列一致で<mark>位置を探すのに使うので、
     // 本文に無い並びになりうるイディオムではなく、ホバーした単語のままにする
     showPopup(html, headword, hovered, range, anchorRect);
@@ -958,6 +1110,8 @@ async function showHoveredWord({ hovered, point, attempt }) {
       }, delay);
     } else {
       lastHoveredWord = null;
+      // 再試行も打ち切りでポップアップも出ない。待機表示を片付ける
+      hideApiIndicator();
     }
   };
 

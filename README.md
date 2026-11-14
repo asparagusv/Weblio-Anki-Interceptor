@@ -1,23 +1,22 @@
 # Weblio-Anki-Interceptor
 
-Weblio ポップアップ辞書と組み合わせて、調べた英単語・例文を Anki へ無制限に保存できる Chrome 拡張機能です。
+Weblio 辞書の内容をその場でポップアップ表示し、調べた英単語・例文を Anki へ無制限に保存できる Chrome 拡張機能です。
+
+> 名前に「Interceptor」とありますが、初期バージョンは Weblio 拡張機能の通信をヘッダから傍受する仕組みでした。現在は通信の傍受を行わず、Weblio のページを直接取得して自前で表示する実装に変わっています（歴史的経緯による名称です）。
 
 ## 概要
 
-[Weblioポップアップ英和辞書](https://chrome.google.com/webstore/detail/weblio%E3%83%9D%E3%83%83%E3%83%97%E3%82%A2%E3%83%83%E3%83%97%E8%8B%B1%E5%92%8C%E8%BE%9E%E5%85%B8/oingodpdjohhkelnginmkagmkbplgema?hl=ja)のポップアップ辞書と同時に使用することで、Weblio 辞書と Anki フラッシュカードソフトウェアを使用して、無制限の英単語と定義を保存して学習することができます。通常、Weblio は個人の単語帳に保存できる単語数に上限があり、月額プランに加入しない限り 200 単語しか保存できません。しかし、この拡張機能では、Weblio から単語の定義や音声を直接ダウンロードして、Anki にインポートすることで、単語数の制限を回避できます。
+英単語にマウスオーバー（またはテキスト選択）すると、この拡張機能が Weblio 英和辞書 (ejje.weblio.jp) の内容を取得してページ上に自前の辞書ポップアップを表示します。ポップアップの＋ボタンを押すと、単語の定義と音声を Anki にカードとして追加できます。
+
+通常、Weblio は個人の単語帳に保存できる単語数に上限があり、月額プランに加入しない限り 200 単語しか保存できません。この拡張機能では、Weblio から単語の定義や音声を直接取得して Anki にインポートすることで、単語数の制限を回避できます。
 
 ## 仕組み
 
-### Weblio 拡張機能側の機能
-
-保存したい単語にマウスオーバーして現れたポップアップの＋を押すと、Weblio で単語を検索するネットワーク通信が行われます。
-
-### Weblio-Anki-Interceptor 側の機能
-
-ネットワーク通信の header から単語を特定し、Weblio で検索。
-取得した html ドキュメントを解析して Anki に情報を追加（AnkiConnect 経由。単語の音声もカードに添付します）。
-
-また、ページ内でテキスト選択して「原文 + DeepL 翻訳」のカードを作ることもできます。
+1. 単語にホバー（またはテキスト選択）すると、content script (`dictionary-popup.js`) が Weblio の辞書ページを background 経由で取得し、自前のポップアップ辞書を表示します（熟語は周辺の n-gram を並列に照会して最長一致で判定します）
+2. ポップアップの＋ボタンを押すと、background (`background.js`) が `ejje.weblio.jp/content/<見出し語>` を取得し、offscreen document の DOMParser で HTML を解析して `{word, meaning, audio}` を抽出します
+3. AnkiConnect 経由で Anki にノートを追加します（単語の音声もカードに添付します）。重複していた場合は追加をスキップして通知します
+4. ポップアップの＋押下時に掴んだ Range から周辺の文章を切り出し、例文として先ほどのノートの裏面に追記します
+5. テキストを選択して翻訳ボタンを押すと、「原文（表面）+ DeepL 翻訳（裏面）」のカードも作れます
 
 ## セットアップ
 
@@ -26,7 +25,6 @@ Weblio ポップアップ辞書と組み合わせて、調べた英単語・例�
 - [Anki](https://apps.ankiweb.net/) と [AnkiConnect](https://foosoft.net/projects/anki-connect/)（拡張機能コード `2055492159`）
   - AnkiConnect の WebCorsOriginList 制限に `http://localhost` が許可されていることを確認してください（デフォルト設定のままで動きます）
 - Anki のノートタイプ「基本」（表面 / 裏面 のフィールドを持つもの）。日本語ロケールの Anki であればデフォルトのまま使えます
-- [Weblioポップアップ英和辞書](https://chrome.google.com/webstore/detail/weblio%E3%83%9D%E3%83%83%E3%83%97%E3%82%A2%E3%83%83%E3%83%97%E8%8B%B1%E5%92%8C%E8%BE%9E%E5%85%B8/oingodpdjohhkelnginmkagmkbplgema?hl=ja)（本拡張機能と同時に有効化します）
 
 ### インストール
 
@@ -52,25 +50,28 @@ npx webpack   # dist/addTranslate.js を生成
 ## 使い方
 
 1. Anki を起動しておく
-2. 任意のページで単語にマウスオーバーし、Weblio ポップアップの＋を押す
-   - Weblio への通信を本拡張機能が傍受し、定義と音声を取得して Anki にカードを追加します
+2. 任意のページで単語にマウスオーバー（またはテキスト選択）すると、Weblio の辞書ポップアップが表示される
+3. ポップアップの＋ボタンを押す
+   - 定義と音声を取得して Anki にカードを追加し、周辺の文章を例文として裏面に追記します
    - テキストを選択して翻訳ボタンを押すと、「原文（表面）+ DeepL 翻訳（裏面）」のカードも作れます
-3. 追加先のデッキ名はツールバーの拡張機能ポップアップから変更できます（未設定時は「デフォルト」）
+4. 追加先のデッキ名はツールバーの拡張機能ポップアップから変更できます（未設定時は「デフォルト」）
 
 ## ファイル構成
 
 | ファイル | 役割 |
 | --- | --- |
 | `sw.js` | MV3 service worker。各スクリプトを読み込む入口 |
-| `background.js` | Weblio への通信を傍受してカード追加を起動 |
+| `background.js` | content script からのリクエストで Weblio の辞書ページを取得し、offscreen で解析した結果を Anki に登録 |
 | `ankiconnect.js` | AnkiConnect への fetch ラッパーとノート追加 |
 | `deck-name.js` | デッキ名の保存・取得 |
-| `add-example.js` | 例文カードの追加 |
+| `add-example.js` | 直近のノートの裏面に例文を追記、画像検索ボタンや画像の追加 |
 | `add-translate.js` | DeepL / Google 翻訳の実装（webpack で `dist/addTranslate.js` にバンドル） |
 | `translate-config.js` | 翻訳プロバイダの切り替え（`"deepl"` / `"google"`） |
-| `content.js` / `mark.js` / `idiom-candidates.js` / `dictionary-popup.js` | コンテンツスクリプト側。ホバー単語の判定・選択範囲の処理・辞書ポップアップ |
+| `content.js` / `mark.js` / `idiom-candidates.js` / `dictionary-popup.js` | コンテンツスクリプト側。ホバー単語の判定・選択範囲の処理・自前の辞書ポップアップ |
 | `popup.html` / `popup.js` | ツールバーポップアップ（デッキ名設定・診断表示） |
-| `offscreen.js` / `offscreen.html` | 音声ダウンロードなどのオフスクリーン処理 |
+| `offscreen.js` / `offscreen.html` | service worker には DOMParser がないため、Weblio の HTML 解析をオフスクリーンで行う |
+
+`content.js` は、Weblio 公式ポップアップ辞書拡張機能が入っている環境向けのレガシー互換です（公式拡張のポップアップ内に追加結果を表示するもの）。本拡張機能は公式拡張機能なしで動作し、追加結果は自前のトーストで表示します。
 
 ## 開発
 

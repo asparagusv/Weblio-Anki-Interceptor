@@ -35,12 +35,11 @@ async function addWordFromLemma(lemma) {
   // ボタンにnoteIdを埋め込んだ内容でupdateNoteFieldsする
   const result = await addNote(await getDeckName(), word, meaning, audio);
 
-  let answer = meaning;
   if (result !== "cannot create note because it is a duplicate") {
-    answer = await appendImageSearchButton(result, word, meaning);
+    await appendImageSearchButton(result, word, meaning);
   }
 
-  addNoteErrorHandler(result, word, answer);
+  addNoteErrorHandler(result, word);
   return { word, result };
 }
 

@@ -43,12 +43,11 @@ async function addNoteWithTranslatedText(text, translation) {
   const meaning = translation || (await translateToJapanese(text));
   const result = await addNote(await getDeckName(), text, meaning);
 
-  let answer = meaning;
   if (result !== "cannot create note because it is a duplicate") {
-    answer = await appendImageSearchButton(result, text, meaning);
+    await appendImageSearchButton(result, text, meaning);
   }
 
-  addNoteErrorHandler(result, text, answer);
+  addNoteErrorHandler(result, text);
   return result;
 }
 

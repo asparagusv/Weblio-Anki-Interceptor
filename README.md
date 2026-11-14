@@ -67,11 +67,9 @@ npx webpack   # dist/addTranslate.js を生成
 | `add-example.js` | 直近のノートの裏面に例文を追記、画像検索ボタンや画像の追加 |
 | `add-translate.js` | DeepL / Google 翻訳の実装（webpack で `dist/addTranslate.js` にバンドル） |
 | `translate-config.js` | 翻訳プロバイダの切り替え（`"deepl"` / `"google"`） |
-| `content.js` / `mark.js` / `idiom-candidates.js` / `dictionary-popup.js` | コンテンツスクリプト側。ホバー単語の判定・選択範囲の処理・自前の辞書ポップアップ |
+| `mark.js` / `idiom-candidates.js` / `dictionary-popup.js` | コンテンツスクリプト側。ホバー単語の判定・選択範囲の処理・自前の辞書ポップアップ |
 | `popup.html` / `popup.js` | ツールバーポップアップ（デッキ名設定・診断表示） |
 | `offscreen.js` / `offscreen.html` | service worker には DOMParser がないため、Weblio の HTML 解析をオフスクリーンで行う |
-
-`content.js` は、Weblio 公式ポップアップ辞書拡張機能が入っている環境向けのレガシー互換です（公式拡張のポップアップ内に追加結果を表示するもの）。本拡張機能は公式拡張機能なしで動作し、追加結果は自前のトーストで表示します。
 
 ## 開発
 

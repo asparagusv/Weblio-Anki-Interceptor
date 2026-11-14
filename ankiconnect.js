@@ -93,24 +93,10 @@ async function appendImageSearchButton(noteId, word, meaning) {
   return answer;
 }
 
-function addNoteErrorHandler(result, word, meaning) {
+function addNoteErrorHandler(result, word) {
   //　重複時
   if (result === "cannot create note because it is a duplicate") {
-    let triggerKeyword = "weblioAnkiInterceptor-duplicate";
-    const messages = [
-      triggerKeyword,
-      { word: word, meaning: meaning },
-    ];
-
-
-    console.log(JSON.stringify(messages, null, 2));
-    // メッセージでcontent.jsのdom操作をトリガー
-    chrome.tabs.query(
-      { active: true, currentWindow: true },
-      function (tabs) {
-        chrome.tabs.sendMessage(tabs[0].id, messages);
-      }
-    );
+    console.log(JSON.stringify({ duplicate: true, word }, null, 2));
   } else {
     // 重複していない時はnoteIdが返される
     console.log(`${result}`);
@@ -125,21 +111,5 @@ function addNoteErrorHandler(result, word, meaning) {
 
     // add-example.jsのupdateContextMenuTitleをトリガー
     updateContextMenuTitle(result);
-
-    let triggerKeyword = "weblioAnkiInterceptor-succeed";
-    // トリガーとなるメッセージと、単語、意味をオブジェクトにする
-    const messages = [
-      triggerKeyword,
-      { word: word, meaning: meaning },
-    ];
-    
-    
-    // 現在のアクティブタブにメッセージを送り、content.jsで受信
-    chrome.tabs.query(
-      { active: true, currentWindow: true },
-      function (tabs) {
-        chrome.tabs.sendMessage(tabs[0].id, messages);
-      }
-    );
   }
 }
